@@ -9,7 +9,7 @@ namespace CodexPetPlus.Windows;
 
 public partial class App : System.Windows.Application
 {
-    internal Preferences Preferences { get; } = Preferences.Load();
+    internal Preferences Preferences { get; private set; } = null!;
     internal string PetStatus { get; private set; } = "펫을 자동으로 찾는 중입니다. 앱에서 기본 펫이나 커스텀 펫을 켜 주세요.";
     internal string UsageStatus { get; private set; } = "모드 앱을 실행하면 펫 아래에서 한도를 확인할 수 있습니다.";
     internal event Action? StatusChanged;
@@ -31,9 +31,16 @@ public partial class App : System.Windows.Application
     private bool closing;
     private bool above;
 
-    protected override void OnStartup(StartupEventArgs args)
+    protected override async void OnStartup(StartupEventArgs args)
     {
         base.OnStartup(args);
+        if (args.Args.Contains("--admin-task"))
+        {
+            try { Shutdown(await Administrator.RunWorkerAsync(ElevationRequest.Parse(args.Args))); }
+            catch (ArgumentException) { Shutdown(2); }
+            return;
+        }
+        Preferences = global::CodexPetPlus.Windows.Preferences.Load();
         singleInstance = new Mutex(true, @"Local\CodexPetPlus", out var first);
         if (!first) { System.Windows.MessageBox.Show("이미 실행 중입니다. 작업 표시줄 트레이의 Codex Pet Plus 아이콘을 열어 주세요.", "Codex Pet Plus"); Shutdown(); return; }
         overlay = new OverlayWindow();

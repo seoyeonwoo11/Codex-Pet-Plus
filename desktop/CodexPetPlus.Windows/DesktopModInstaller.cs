@@ -9,11 +9,13 @@ namespace CodexPetPlus.Windows;
 internal sealed record ModInstallation(string Executable, string SourceExecutable, string Version, DateTimeOffset InstalledAt,
     string Mode = "copy", string? BackupFile = null, string State = "installed");
 internal sealed record ModRuntimeStatus(bool Running, int ProcessId, string AppVersion, int PetWindows, bool QuotaAvailable, DateTimeOffset UpdatedAt);
+internal sealed class ModWriteAccessException(string message, Exception inner) : IOException(message, inner) { }
 
 internal static class DesktopModInstaller
 {
     public const string TargetVersion = "26.1023.51421";
-    private static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPetPlus", "mod");
+    internal static string? DataRootOverride { private get; set; }
+    private static string Root => DataRootOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPetPlus", "mod");
     private static string Manifest => Path.Combine(Root, "installation.json");
     private static string RuntimeStatus => Path.Combine(Root, "runtime-status.json");
 
@@ -212,7 +214,7 @@ internal static class DesktopModInstaller
             }
         }
         catch (UnauthorizedAccessException error)
-        { throw new IOException("앱 설치 폴더에 쓰기 권한이 없어 직접 패치할 수 없습니다. WindowsApps 보호 설치본에서는 수정이 제한됩니다.", error); }
+        { throw new ModWriteAccessException("앱 설치 폴더에 쓰기 권한이 없어 직접 패치할 수 없습니다. 관리자 승인(UAC)이 필요할 수 있으며 WindowsApps 보호 설치본에서는 수정이 제한됩니다.", error); }
         catch (IOException error)
         { throw new IOException("앱 파일이 사용 중이거나 설치 폴더를 수정할 수 없습니다. 앱을 완전히 종료하고 쓰기 권한을 확인해 주세요.", error); }
     }

@@ -16,9 +16,10 @@ public partial class SettingsWindow : Window
         RecordsPath.Text = app.Preferences.RecordsHome;
         RecentRecords.IsChecked = app.Preferences.UseRecentRecords;
         CompanionOverlay.IsChecked = app.Preferences.UseCompanionOverlay;
-        var installerVersion = typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.5.0";
+        var installerVersion = typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.5.1";
         Title = "Codex Pet Plus " + installerVersion;
         ModVersionText.Text = "대상 버전: " + DesktopModInstaller.TargetVersion + " · 설치기 " + installerVersion;
+        AdminStatusText.Text = Administrator.IsElevated ? "현재 권한: 관리자 · 설치 폴더 쓰기 권한은 별도로 확인합니다." : "현재 권한: 일반 · 필요하면 Windows 관리자 승인(UAC)을 요청합니다.";
         UpdateStatus();
         app.StatusChanged += UpdateStatus;
         Closed += (_, _) => { app.StatusChanged -= UpdateStatus; closing.Cancel(); };
@@ -56,13 +57,17 @@ public partial class SettingsWindow : Window
         var dialog = new Microsoft.Win32.OpenFileDialog { Title = "설치된 ChatGPT / Codex 앱 선택", Filter = "앱 실행 파일|ChatGPT.exe;Codex.exe", CheckFileExists = true };
         if (dialog.ShowDialog(this) == true) { DesktopAppPath.Text = dialog.FileName; ShowDetectedVersion(); }
     }
-    private async void InstallMod(object sender, RoutedEventArgs args)
+    private async void InstallMod(object sender, RoutedEventArgs args) => await InstallAsync(false);
+    private async void InstallModAsAdministrator(object sender, RoutedEventArgs args) => await InstallAsync(true);
+    private async Task InstallAsync(bool forceElevation)
     {
         if (IsModOperationRunning) return; SetModBusy(true);
         try
         {
             ShowDetectedVersion();
-            await DesktopModInstaller.InstallAsync(DesktopAppPath.Text.Trim(), new Progress<string>(message => ModStatusText.Text = message), closing.Token);
+            var result = await ExecuteModOperation("patch", DesktopAppPath.Text.Trim(), forceElevation);
+            ModStatusText.Text = result.Message;
+            if (!result.Success) return;
             app.Preferences.UseCompanionOverlay = false; CompanionOverlay.IsChecked = false;
             try { app.Preferences.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
             await app.ResetConnectionAsync();
@@ -77,21 +82,43 @@ public partial class SettingsWindow : Window
     {
         IsModOperationRunning = busy;
         InstallModButton.IsEnabled = !busy; RestoreModButton.IsEnabled = !busy; LaunchModButton.IsEnabled = !busy;
+        AdminPatchButton.IsEnabled = !busy;
         ChooseDesktopButton.IsEnabled = !busy; DesktopAppPath.IsReadOnly = busy; BackupFolderButton.IsEnabled = !busy;
     }
     private async void RestoreMod(object sender, RoutedEventArgs args)
     {
         if (IsModOperationRunning) return; SetModBusy(true);
-        try { await DesktopModInstaller.RestoreAsync(new Progress<string>(message => ModStatusText.Text = message)); }
+        try
+        {
+            var installed = DesktopModInstaller.Current() ?? throw new IOException("복원할 패치 기록이 없습니다.");
+            ModStatusText.Text = (await ExecuteModOperation("restore", installed.Executable, false)).Message;
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException or ArgumentException or FormatException or OverflowException)
         { ModStatusText.Text = "복원하지 못했습니다. " + error.Message; }
         finally { SetModBusy(false); }
     }
-    private void CheckModAccess(object sender, RoutedEventArgs args)
+    private async void CheckModAccess(object sender, RoutedEventArgs args)
     {
-        if (IsModOperationRunning) return;
-        try { DesktopModInstaller.CheckAccess(DesktopAppPath.Text.Trim()); ModStatusText.Text = "앱 설치 폴더에 쓰기 권한이 있습니다. 앱에 패치할 수 있습니다."; }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { ModStatusText.Text = error.Message; }
+        if (IsModOperationRunning) return; SetModBusy(true);
+        try { ModStatusText.Text = (await ExecuteModOperation("check", DesktopAppPath.Text.Trim(), false)).Message; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or JsonException or System.ComponentModel.Win32Exception)
+        { ModStatusText.Text = error.Message; }
+        finally { SetModBusy(false); }
+    }
+    private async Task<AdminTaskResult> ExecuteModOperation(string operation, string target, bool forceElevation)
+    {
+        var progress = new Progress<string>(message => ModStatusText.Text = message);
+        if (forceElevation && !Administrator.IsElevated) return await Administrator.RunAsync(operation, target, progress);
+        try
+        {
+            if (operation == "patch") await DesktopModInstaller.InstallAsync(target, progress, closing.Token);
+            else if (operation == "restore") await DesktopModInstaller.RestoreAsync(progress);
+            else DesktopModInstaller.CheckAccess(target);
+            return new(true, false, operation == "patch" ? "앱에 패치했습니다. 평소 앱 바로가기로 열고 원하는 펫을 켜 주세요."
+                : operation == "restore" ? "원본 파일을 복원했습니다." : "쓰기 권한을 확인했습니다. 앱에 패치할 수 있습니다.");
+        }
+        catch (ModWriteAccessException) when (!Administrator.IsElevated)
+        { return await Administrator.RunAsync(operation, target, progress); }
     }
     private void LaunchMod(object sender, RoutedEventArgs args)
     {
@@ -99,7 +126,8 @@ public partial class SettingsWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         { ModStatusText.Text = ex.Message; }
     }
-    private void CheckModStatus(object sender, RoutedEventArgs args) => ModStatusText.Text = DesktopModInstaller.Status();
+    private void CheckModStatus(object sender, RoutedEventArgs args)
+    { if (!IsModOperationRunning) ModStatusText.Text = DesktopModInstaller.Status(); }
     private void OpenModFolder(object sender, RoutedEventArgs args)
     {
         try { Directory.CreateDirectory(DesktopModInstaller.BackupFolder); Process.Start(new ProcessStartInfo(DesktopModInstaller.BackupFolder) { UseShellExecute = true }); }

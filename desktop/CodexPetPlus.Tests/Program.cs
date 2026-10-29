@@ -16,6 +16,37 @@ void Test(string name, Action run) => tests.Add((name, () => { run(); return Tas
 void AsyncTest(string name, Func<Task> run) => tests.Add((name, run));
 JsonElement Json(string value) { using var doc = JsonDocument.Parse(value); return doc.RootElement.Clone(); }
 
+Test("UAC launches the installer with a structured runas request", () => {
+    var appPath = Path.Combine(Path.GetTempPath(), "앱 경로 & 문자", "ChatGPT.exe");
+    var request = new ElevationRequest("patch", 123, appPath, Guid.NewGuid());
+    var start = request.StartInfo(Path.Combine(Path.GetTempPath(), "도구 경로", "CodexPetPlus.exe"));
+    Check(start.UseShellExecute && start.Verb == "runas", "Windows UAC was not requested");
+    Check(start.Arguments == "" && start.ArgumentList[5] == appPath, "Path became shell text");
+    Check(ElevationRequest.Parse(start.ArgumentList.ToArray()) == request, "UAC arguments lost the selected app");
+});
+Test("UAC helpers reject unknown actions and malformed handoff arguments", () => {
+    var path = Path.Combine(Path.GetTempPath(), "ChatGPT.exe"); var id = Guid.NewGuid().ToString("N");
+    foreach (var values in new[] {
+        new[] { "--admin-task", "launch", "--parent", "123", "--app", path, "--request", id },
+        new[] { "--admin-task", "patch", "--parent", "0", "--app", path, "--request", id },
+        new[] { "--admin-task", "patch", "--parent", "123", "--app", "relative.exe", "--request", id },
+        new[] { "--admin-task", "patch", "--parent", "123", "--app", path, "--request", "invalid" }
+    }) { try { ElevationRequest.Parse(values); throw new Exception("Invalid admin request accepted"); } catch (ArgumentException) { } }
+});
+Test("UAC helpers accept only patch, restore, or write checks", () => {
+    foreach (var operation in new[] { "patch", "restore", "check" })
+    {
+        var request = new ElevationRequest(operation, 123, Path.Combine(Path.GetTempPath(), "ChatGPT.exe"), Guid.NewGuid());
+        Check(ElevationRequest.Parse(request.StartInfo(Environment.ProcessPath!).ArgumentList.ToArray()).Operation == operation, "Supported admin action rejected");
+    }
+});
+if (OperatingSystem.IsWindows()) Test("Windows helper resolves the original process profile and rejects another image", () => {
+    if (!OperatingSystem.IsWindows()) return;
+    var actual = CodexPetPlus.Windows.WindowsTokenProfile.LocalAppDataOf(Environment.ProcessId, Environment.ProcessPath!);
+    Check(Path.GetFullPath(actual).Equals(Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), StringComparison.OrdinalIgnoreCase), "Elevation would change the backup owner profile");
+    try { CodexPetPlus.Windows.WindowsTokenProfile.LocalAppDataOf(Environment.ProcessId, Path.Combine(Path.GetTempPath(), "not-this-installer.exe")); throw new Exception("Another caller image accepted"); } catch (IOException) { }
+});
+
 Test("live API quota is remaining allowance, not token context", () => {
     var snapshot = QuotaParser.FromAppServer(Json("""{"rateLimits":{"limitId":"codex","primary":{"usedPercent":28,"windowDurationMins":300},"secondary":{"usedPercent":16,"windowDurationMins":10080}}}"""), now)!;
     Check(snapshot.Primary!.Remaining(now) == 72 && snapshot.Secondary!.Remaining(now) == 84, "Incorrect remaining percentages");
