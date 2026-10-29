@@ -68,21 +68,36 @@ Test("expired reset timestamps never become a guessed full quota", () => {
     Check(new QuotaWindow(20, 300, now.AddSeconds(-1)).Remaining(now) is null, "Expired value displayed as current");
     Check(new QuotaWindow(double.NaN, 300, now.AddHours(1)).Remaining(now) is null, "Nonfinite value displayed");
 });
-Test("panel is centered directly below the pet", () => {
-    var position = Placement.BelowPet(new(100, 100, 240, 240), new(0, 0, 1920, 1040), 180, 62);
-    Check(position == new PanelPosition(80, 245, false), "Panel is not below its anchor");
+Test("new and previous mod settings enable the follower without losing connection preferences", () => {
+    Check(new CodexPetPlus.Windows.Preferences().FollowPetEnabled, "New installation has no follower");
+    var previous = JsonSerializer.Deserialize<CodexPetPlus.Windows.Preferences>("""{"UseCompanionOverlay":false,"PetTitle":"모찌","CodexExecutable":"custom-cli.exe"}""")!;
+    Check(previous.FollowPetEnabled && previous.PetTitle == "모찌" && previous.CodexExecutable == "custom-cli.exe", "Upgrade left the follower off or lost settings");
 });
-Test("bottom edge puts the panel above without covering the pet", () => {
-    var position = Placement.BelowPet(new(100, 950, 240, 1030), new(0, 0, 1920, 1040), 180, 62);
-    Check(position.Above && position.Y + 62 < 950, "Panel overlaps pet at the bottom edge");
+Test("deliberately disabling the follower survives saving and reopening settings", () => {
+    var preferences = new CodexPetPlus.Windows.Preferences { FollowPetEnabled = false };
+    var reopened = JsonSerializer.Deserialize<CodexPetPlus.Windows.Preferences>(JsonSerializer.Serialize(preferences))!;
+    Check(!reopened.FollowPetEnabled, "Disabled follower was enabled again");
+});
+Test("panel is centered directly above the pet", () => {
+    var position = Placement.AbovePet(new(100, 100, 240, 240), new(0, 0, 1920, 1040), 180, 62);
+    Check(position == new PanelPosition(80, 33, true), "Panel is not above its anchor");
+});
+Test("top edge puts the panel below without covering the pet", () => {
+    var position = Placement.AbovePet(new(100, 5, 240, 145), new(0, 0, 1920, 1040), 180, 62);
+    Check(position == new PanelPosition(80, 150, false), "Panel overlaps pet at the top edge");
 });
 Test("negative monitor coordinates and edge clamping work", () => {
-    var position = Placement.BelowPet(new(-1900, 100, -1780, 220), new(-1920, 0, 0, 1040), 180, 62);
-    Check(position.X == -1920 && position.Y == 225, "Panel was moved to the wrong monitor");
+    var position = Placement.AbovePet(new(-1900, -900, -1780, -780), new(-1920, -1040, 0, 0), 180, 62);
+    Check(position == new PanelPosition(-1920, -967, true), "Panel was moved to the wrong monitor");
 });
 Test("physical pixel placement preserves two-times DPI dimensions", () => {
-    var position = Placement.BelowPet(new(200, 200, 480, 480), new(0, 0, 3840, 2080), 360, 124, 10);
-    Check(position == new PanelPosition(160, 490, false), "DPI-scaled placement is incorrect");
+    var position = Placement.AbovePet(new(200, 200, 480, 480), new(0, 0, 3840, 2080), 360, 124, 10);
+    Check(position == new PanelPosition(160, 66, true), "DPI-scaled placement is incorrect");
+});
+Test("screen boundaries keep the panel visible even when neither side fully fits", () => {
+    var position = Placement.AbovePet(new(175, 10, 315, 150), new(0, 0, 320, 180), 180, 62);
+    Check(position == new PanelPosition(140, 118, false), "Panel is outside the available work area");
+    Check(Placement.AbovePet(new(100, 67, 240, 207), new(0, 0, 1920, 1040), 180, 62).Y == 0, "Exact top fit was rejected");
 });
 
 PetWindow Pet(int handle, string title = "", uint style = 0, uint extended = 0x00080008) => new((nint)handle, 123, title, new(100, 100, 260, 260), 96, "Chrome_WidgetWin_1", style, extended);

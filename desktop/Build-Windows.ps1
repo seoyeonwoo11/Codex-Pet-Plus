@@ -4,6 +4,8 @@ Push-Location $projectRoot
 try {
     dotnet run --project desktop/CodexPetPlus.Tests/CodexPetPlus.Tests.csproj -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Desktop core tests failed.' }
+    dotnet run --project desktop/CodexPetPlus.Windows.Tests/CodexPetPlus.Windows.Tests.csproj -c Release
+    if ($LASTEXITCODE -ne 0) { throw 'Windows pet follower smoke test failed.' }
     $output = Join-Path $projectRoot 'dist/windows'
     if (Test-Path $output) { Remove-Item -Recurse -Force $output }
     dotnet publish desktop/CodexPetPlus.Windows/CodexPetPlus.Windows.csproj -c Release -p:PublishProfile=Portable -o $output --nologo

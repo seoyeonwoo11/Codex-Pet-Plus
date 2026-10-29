@@ -8,7 +8,9 @@ internal sealed class Preferences
     public string RecordsHome { get; set; } = Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
     public string PetTitle { get; set; } = "";
     public string PetClassName { get; set; } = "";
-    public bool UseCompanionOverlay { get; set; }
+    // A new setting makes the follower the default even for 0.5.x mod-only settings.
+    // A deliberate off choice saved by 0.6.x is preserved on subsequent launches.
+    public bool FollowPetEnabled { get; set; } = true;
     public bool UseRecentRecords { get; set; } = true;
     private static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPetPlus", "settings.json");
     public static Preferences Load()

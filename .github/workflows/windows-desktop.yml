@@ -21,7 +21,8 @@ jobs:
           node-version: '24'
       - name: Test app mod runtime
         run: node --test tests/mod.test.cjs
-      - name: Test and build self-contained Windows app
+      - name: Test quota bar and build Windows app
+        timeout-minutes: 10
         shell: pwsh
         run: ./desktop/Build-Windows.ps1
       - name: Verify packed mod in a real Electron test app

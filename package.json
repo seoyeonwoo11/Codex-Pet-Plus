@@ -1,9 +1,9 @@
 {
   "name": "codex-pet-plus",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
-  "description": "Windows quota display that follows the Codex app's built-in pet.",
+  "description": "Windows quota bar that follows above the Codex app's built-in and custom pets.",
   "engines": { "node": ">=20" },
   "scripts": {
     "check": "node scripts/check.mjs",

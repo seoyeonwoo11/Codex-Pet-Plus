@@ -91,7 +91,7 @@ internal static class NativeWindows
     {
         var scale = pet.Dpi / 96d;
         var width = (int)Math.Round(logicalWidth * scale); var height = (int)Math.Round(logicalHeight * scale);
-        var position = Placement.BelowPet(pet.Bounds, WorkArea(pet), width, height, (int)Math.Round(5 * scale));
+        var position = Placement.AbovePet(pet.Bounds, WorkArea(pet), width, height, (int)Math.Round(5 * scale));
         SetWindowPos(panel, new nint(-1), position.X, position.Y, width, height, 0x0010); // keep app focus
         return position;
     }

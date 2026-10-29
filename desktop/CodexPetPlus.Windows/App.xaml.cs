@@ -11,7 +11,7 @@ public partial class App : System.Windows.Application
 {
     internal Preferences Preferences { get; private set; } = null!;
     internal string PetStatus { get; private set; } = "펫을 자동으로 찾는 중입니다. 앱에서 기본 펫이나 커스텀 펫을 켜 주세요.";
-    internal string UsageStatus { get; private set; } = "모드 앱을 실행하면 펫 아래에서 한도를 확인할 수 있습니다.";
+    internal string UsageStatus { get; private set; } = "Codex의 남은 한도를 확인하는 중입니다.";
     internal event Action? StatusChanged;
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim quotaGate = new(1, 1);
@@ -105,7 +105,12 @@ public partial class App : System.Windows.Application
     private void FollowPet()
     {
         if (closing) return;
-        if (!Preferences.UseCompanionOverlay) { if (overlay.IsVisible) overlay.Hide(); return; }
+        if (!Preferences.FollowPetEnabled)
+        {
+            if (overlay.IsVisible) overlay.Hide();
+            SetPetStatus("표시줄이 꺼져 있습니다. ‘펫 위에 한도 표시’를 켜 주세요.");
+            return;
+        }
         pet = attachedHandle == 0 ? null : NativeWindows.Inspect(attachedHandle);
         if (pet?.ProcessId != attachedProcessId) pet = null;
         if (pet is null && DateTime.UtcNow >= nextPetSearch)
@@ -125,7 +130,7 @@ public partial class App : System.Windows.Application
         }
         if (!overlay.IsVisible)
         {
-            SetPetStatus("펫에 연결됐습니다. 이동하거나 커스텀 펫으로 바꿔도 표시줄이 따라갑니다.");
+            SetPetStatus("펫에 연결됐습니다. 펫 위에 한도를 표시하고 이동하면 따라갑니다.");
             overlay.Opacity = 0; overlay.Show();
         }
         var handle = new WindowInteropHelper(overlay).EnsureHandle();
@@ -136,16 +141,17 @@ public partial class App : System.Windows.Application
 
     internal async Task ResetConnectionAsync()
     {
+        FollowPet();
         await quotaGate.WaitAsync();
         try { if (connection is not null) await connection.DisposeAsync(); connection = null; executable = null; snapshot = null; }
         finally { quotaGate.Release(); }
-        if (Preferences.UseCompanionOverlay) await RefreshUsageAsync();
-        else { FollowPet(); UsageStatus = "모드 앱을 실행하면 펫 아래에서 한도를 확인할 수 있습니다."; StatusChanged?.Invoke(); }
+        if (Preferences.FollowPetEnabled) await RefreshUsageAsync();
+        else { UsageStatus = "표시줄을 켜면 한도를 조회합니다."; StatusChanged?.Invoke(); }
     }
 
     internal async Task RefreshUsageAsync()
     {
-        if (closing || !Preferences.UseCompanionOverlay || !await quotaGate.WaitAsync(0)) return;
+        if (closing || !Preferences.FollowPetEnabled || !await quotaGate.WaitAsync(0)) return;
         try
         {
             try
