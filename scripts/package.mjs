@@ -14,7 +14,7 @@ async function add(relative) {
   }
 }
 await add('extension');
-for (const file of ['README.md', 'PRIVACY.md']) files[`codex-pet-plus/${file}`] = new Uint8Array(await readFile(path.join(root, file)));
+for (const file of ['README.md', 'PRIVACY.md']) files[`codex-pet-plus/${file}`] = new Uint8Array(await readFile(path.join(root, 'extension', file)));
 await mkdir(path.join(root, 'dist'), { recursive: true });
 await writeFile(path.join(root, 'dist/codex-pet-plus.zip'), zipSync(files));
 console.log(`Created dist/codex-pet-plus.zip (${Object.keys(files).length} files). No dependency install or build is needed to load the extension.`);

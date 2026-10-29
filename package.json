@@ -1,15 +1,17 @@
 {
   "name": "codex-pet-plus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Chrome companion for Codex usage, projects, and tasks.",
+  "description": "Windows quota display that follows the Codex app's built-in pet.",
   "engines": { "node": ">=20" },
   "scripts": {
     "check": "node scripts/check.mjs",
     "test": "node tests/run.mjs",
     "test:browser": "playwright test",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package-desktop.mjs",
+    "package:extension": "node scripts/package.mjs",
+    "test:desktop": "dotnet run --project desktop/CodexPetPlus.Tests/CodexPetPlus.Tests.csproj"
   },
   "devDependencies": { "@playwright/test": "1.64.1", "fflate": "0.8.2" }
 }

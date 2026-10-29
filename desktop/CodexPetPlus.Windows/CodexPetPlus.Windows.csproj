@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>CodexPetPlus</AssemblyName>
+    <RootNamespace>CodexPetPlus.Windows</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- WPF owns DPI initialization through app.manifest; WinForms is only the tray icon. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CodexPetPlus.Core/CodexPetPlus.Core.csproj" />
+    <Resource Include="../../extension/assets/icon128.png" Link="Assets/app.png" />
+  </ItemGroup>
+</Project>
