@@ -7,6 +7,8 @@ internal sealed class Preferences
     public string CodexExecutable { get; set; } = "";
     public string RecordsHome { get; set; } = Environment.GetEnvironmentVariable("CODEX_HOME") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
     public string PetTitle { get; set; } = "";
+    public string PetClassName { get; set; } = "";
+    public bool UseCompanionOverlay { get; set; }
     public bool UseRecentRecords { get; set; } = true;
     private static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexPetPlus", "settings.json");
     public static Preferences Load()

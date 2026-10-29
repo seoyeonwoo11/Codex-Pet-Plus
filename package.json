@@ -1,6 +1,6 @@
 {
   "name": "codex-pet-plus",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Windows quota display that follows the Codex app's built-in pet.",
@@ -11,7 +11,8 @@
     "test:browser": "playwright test",
     "package": "node scripts/package-desktop.mjs",
     "package:extension": "node scripts/package.mjs",
-    "test:desktop": "dotnet run --project desktop/CodexPetPlus.Tests/CodexPetPlus.Tests.csproj"
+    "test:desktop": "dotnet run --project desktop/CodexPetPlus.Tests/CodexPetPlus.Tests.csproj",
+    "test:mod": "node --test tests/mod.test.cjs"
   },
   "devDependencies": { "@playwright/test": "1.64.1", "fflate": "0.8.2" }
 }

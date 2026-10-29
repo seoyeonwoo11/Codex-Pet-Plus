@@ -5,8 +5,6 @@ using CodexPetPlus.Core;
 
 namespace CodexPetPlus.Windows;
 
-internal sealed record PetWindow(nint Handle, int ProcessId, string Title, PixelRect Bounds, uint Dpi);
-
 internal static class NativeWindows
 {
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; public readonly PixelRect Pixels => new(Left, Top, Right, Bottom); }
@@ -20,6 +18,7 @@ internal static class NativeWindows
     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint window, out Rect rect);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint window, out int process);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint window, StringBuilder text, int count);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint window, StringBuilder text, int count);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint window);
     [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint window, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
@@ -30,22 +29,29 @@ internal static class NativeWindows
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint window, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(nint window, int index, nint value);
 
-    public static PetWindow? Inspect(nint handle)
+    public static PetWindow? Inspect(nint handle) => Inspect(handle, null);
+
+    private static PetWindow? Inspect(nint handle, HashSet<int>? codexProcesses)
     {
         if (handle == 0 || !IsWindowVisible(handle) || IsIconic(handle) || !GetWindowRect(handle, out var bounds)) return null;
         if (DwmGetWindowAttribute(handle, 14, out var cloaked, sizeof(int)) == 0 && cloaked != 0) return null;
         GetWindowThreadProcessId(handle, out var pid);
-        try
+        if (codexProcesses is not null)
+        {
+            if (!codexProcesses.Contains(pid)) return null;
+        }
+        else try
         {
             using var process = Process.GetProcessById(pid);
-            if (!process.ProcessName.Equals("codex", StringComparison.OrdinalIgnoreCase)) return null;
+            if (!IsHostProcess(process.ProcessName)) return null;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
         var dpi = Math.Max(96, GetDpiForWindow(handle));
-        var maximum = 650 * dpi / 96;
-        if (bounds.Pixels.Width is < 30 || bounds.Pixels.Height is < 30 || bounds.Pixels.Width > maximum || bounds.Pixels.Height > maximum) return null;
         var title = new StringBuilder(256); GetWindowText(handle, title, title.Capacity);
-        return new(handle, pid, title.ToString(), bounds.Pixels, dpi);
+        var className = new StringBuilder(256); GetClassName(handle, className, className.Capacity);
+        var candidate = new PetWindow(handle, pid, title.ToString(), bounds.Pixels, dpi, className.ToString(),
+            unchecked((uint)(long)GetWindowLongPtr(handle, -16)), unchecked((uint)(long)GetWindowLongPtr(handle, -20)));
+        return PetDiscovery.CanSelect(candidate) ? candidate : null;
     }
 
     public static PetWindow? UnderCursor()
@@ -54,20 +60,20 @@ internal static class NativeWindows
         return Inspect(GetAncestor(WindowFromPoint(point), 2));
     }
 
-    public static PetWindow? Find(string? preferredTitle)
+    public static PetSearchResult Find(string? preferredTitle = null, string? preferredClass = null)
     {
-        var candidates = new List<PetWindow>();
-        EnumWindows((window, _) => { if (Inspect(window) is { } pet) candidates.Add(pet); return true; }, 0);
-        // A unique, explicitly named pet is safe to restore; ambiguous windows need selection.
-        var named = candidates.Where(pet => pet.Title.Contains("pet", StringComparison.OrdinalIgnoreCase) || pet.Title.Contains("companion", StringComparison.OrdinalIgnoreCase) || pet.Title.Contains("펫")).ToList();
-        if (named.Count == 1) return named[0];
-        if (!string.IsNullOrEmpty(preferredTitle))
+        var processes = new HashSet<int>();
+        foreach (var process in Process.GetProcessesByName("Codex").Concat(Process.GetProcessesByName("ChatGPT")))
         {
-            var previous = candidates.Where(pet => pet.Title == preferredTitle).ToList();
-            if (previous.Count == 1) return previous[0];
+            using (process) { try { processes.Add(process.Id); } catch (InvalidOperationException) { } }
         }
-        return null;
+        var candidates = new List<PetWindow>();
+        EnumWindows((window, _) => { if (Inspect(window, processes) is { } pet) candidates.Add(pet); return true; }, 0);
+        return PetDiscovery.Find(candidates, preferredTitle, preferredClass);
     }
+
+    private static bool IsHostProcess(string name) => name.Equals("Codex", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase);
 
     public static PixelRect WorkArea(PetWindow pet)
     {

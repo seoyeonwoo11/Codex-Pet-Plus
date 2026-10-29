@@ -10,8 +10,8 @@ namespace CodexPetPlus.Windows;
 public partial class App : System.Windows.Application
 {
     internal Preferences Preferences { get; } = Preferences.Load();
-    internal string PetStatus { get; private set; } = "Codex 앱에서 기본 펫을 켜고 선택해 주세요.";
-    internal string UsageStatus { get; private set; } = "한도 확인 중";
+    internal string PetStatus { get; private set; } = "펫을 자동으로 찾는 중입니다. 앱에서 기본 펫이나 커스텀 펫을 켜 주세요.";
+    internal string UsageStatus { get; private set; } = "모드 앱을 실행하면 펫 아래에서 한도를 확인할 수 있습니다.";
     internal event Action? StatusChanged;
     private readonly CancellationTokenSource lifetime = new();
     private readonly SemaphoreSlim quotaGate = new(1, 1);
@@ -24,6 +24,7 @@ public partial class App : System.Windows.Application
     private UsageSnapshot? snapshot;
     private PetWindow? pet;
     private nint attachedHandle;
+    private int attachedProcessId;
     private string? executable;
     private DateTime nextPetSearch;
     private Mutex? singleInstance;
@@ -38,7 +39,8 @@ public partial class App : System.Windows.Application
         overlay = new OverlayWindow();
         overlay.ContextMenu = OverlayMenu();
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("설정 · 펫 선택", null, (_, _) => Dispatcher.Invoke(OpenSettings));
+        menu.Items.Add("설정", null, (_, _) => Dispatcher.Invoke(OpenSettings));
+        menu.Items.Add("펫 자동으로 다시 찾기", null, (_, _) => Dispatcher.Invoke(FindPetAgain));
         menu.Items.Add("한도 새로고침", null, (_, _) => Dispatcher.InvokeAsync(async () => await RefreshUsageAsync()));
         menu.Items.Add("종료", null, (_, _) => Dispatcher.Invoke(Quit));
         tray = new Forms.NotifyIcon { Text = "Codex Pet Plus", Icon = System.Drawing.SystemIcons.Application, ContextMenuStrip = menu, Visible = true };
@@ -46,6 +48,7 @@ public partial class App : System.Windows.Application
         followTimer.Tick += (_, _) => FollowPet();
         usageTimer.Tick += async (_, _) => await RefreshUsageAsync();
         followTimer.Start(); usageTimer.Start();
+        FollowPet();
         OpenSettings();
         _ = RefreshUsageAsync();
     }
@@ -53,10 +56,11 @@ public partial class App : System.Windows.Application
     private ContextMenu OverlayMenu()
     {
         var menu = new ContextMenu();
-        var setup = new MenuItem { Header = "설정 · 펫 선택" }; setup.Click += (_, _) => OpenSettings();
+        var setup = new MenuItem { Header = "설정" }; setup.Click += (_, _) => OpenSettings();
+        var find = new MenuItem { Header = "펫 자동으로 다시 찾기" }; find.Click += (_, _) => FindPetAgain();
         var refresh = new MenuItem { Header = "한도 새로고침" }; refresh.Click += async (_, _) => await RefreshUsageAsync();
         var exit = new MenuItem { Header = "종료" }; exit.Click += (_, _) => Quit();
-        menu.Items.Add(setup); menu.Items.Add(refresh); menu.Items.Add(exit); return menu;
+        menu.Items.Add(setup); menu.Items.Add(find); menu.Items.Add(refresh); menu.Items.Add(exit); return menu;
     }
 
     private void OpenSettings()
@@ -67,36 +71,54 @@ public partial class App : System.Windows.Application
 
     internal void SelectPetUnderCursor()
     {
-        pet = NativeWindows.UnderCursor();
-        attachedHandle = pet?.Handle ?? 0;
-        if (pet is null) PetStatus = "커서 아래에서 작은 Codex 펫 창을 찾지 못했습니다. 펫 위에서 다시 선택해 주세요.";
-        else
+        if (NativeWindows.UnderCursor() is { } selected)
         {
+            pet = selected; attachedHandle = selected.Handle; attachedProcessId = selected.ProcessId;
             Preferences.PetTitle = pet.Title;
+            Preferences.PetClassName = pet.ClassName;
             try { Preferences.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            PetStatus = "펫에 연결됐습니다. 이동하면 한도 표시줄도 따라갑니다.";
+            SetPetStatus("선택한 펫에 연결됐습니다. 외형을 바꿔도 한도 표시줄이 따라갑니다.");
+            FollowPet();
         }
-        StatusChanged?.Invoke(); FollowPet();
+        else SetPetStatus("커서 아래에서 펫 창을 찾지 못했습니다. 펫 몸 위에서 다시 선택해 주세요.");
+    }
+
+    internal void FindPetAgain()
+    {
+        attachedHandle = 0; attachedProcessId = 0; pet = null; nextPetSearch = DateTime.MinValue;
+        FollowPet();
+    }
+
+    private void SetPetStatus(string status)
+    {
+        if (PetStatus == status) return;
+        PetStatus = status; StatusChanged?.Invoke();
     }
 
     private void FollowPet()
     {
         if (closing) return;
+        if (!Preferences.UseCompanionOverlay) { if (overlay.IsVisible) overlay.Hide(); return; }
         pet = attachedHandle == 0 ? null : NativeWindows.Inspect(attachedHandle);
+        if (pet?.ProcessId != attachedProcessId) pet = null;
         if (pet is null && DateTime.UtcNow >= nextPetSearch)
         {
-            pet = NativeWindows.Find(Preferences.PetTitle);
-            nextPetSearch = DateTime.UtcNow.AddSeconds(3);
-            if (pet is not null) attachedHandle = pet.Handle;
+            var found = NativeWindows.Find(Preferences.PetTitle, Preferences.PetClassName);
+            pet = found.Window;
+            nextPetSearch = DateTime.UtcNow.AddSeconds(1);
+            if (pet is not null) { attachedHandle = pet.Handle; attachedProcessId = pet.ProcessId; }
+            else SetPetStatus(found.CandidateCount > 1
+                ? "펫 후보가 여러 개여서 연결을 기다립니다. 아래의 직접 선택으로 사용할 펫을 정할 수 있습니다."
+                : "펫을 자동으로 찾는 중입니다. 앱에서 기본 펫이나 커스텀 펫을 켜면 연결합니다.");
         }
         if (pet is null)
         {
-            if (overlay.IsVisible) { overlay.Hide(); PetStatus = "펫이 숨겨졌거나 닫혔습니다. 다시 나타나면 연결을 확인합니다."; StatusChanged?.Invoke(); }
+            if (overlay.IsVisible) overlay.Hide();
             return;
         }
         if (!overlay.IsVisible)
         {
-            PetStatus = "펫에 연결됐습니다. 이동하면 한도 표시줄도 따라갑니다."; StatusChanged?.Invoke();
+            SetPetStatus("펫에 연결됐습니다. 이동하거나 커스텀 펫으로 바꿔도 표시줄이 따라갑니다.");
             overlay.Opacity = 0; overlay.Show();
         }
         var handle = new WindowInteropHelper(overlay).EnsureHandle();
@@ -110,12 +132,13 @@ public partial class App : System.Windows.Application
         await quotaGate.WaitAsync();
         try { if (connection is not null) await connection.DisposeAsync(); connection = null; executable = null; snapshot = null; }
         finally { quotaGate.Release(); }
-        await RefreshUsageAsync();
+        if (Preferences.UseCompanionOverlay) await RefreshUsageAsync();
+        else { FollowPet(); UsageStatus = "모드 앱을 실행하면 펫 아래에서 한도를 확인할 수 있습니다."; StatusChanged?.Invoke(); }
     }
 
     internal async Task RefreshUsageAsync()
     {
-        if (closing || !await quotaGate.WaitAsync(0)) return;
+        if (closing || !Preferences.UseCompanionOverlay || !await quotaGate.WaitAsync(0)) return;
         try
         {
             try

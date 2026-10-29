@@ -8,8 +8,8 @@ async function files(directory) {
   return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(path.join(directory, entry.name)) : path.join(directory, entry.name)))).flat();
 }
 let count = 0;
-for (const directory of ['extension', 'scripts', 'tests']) for (const file of await files(path.join(root, directory))) {
-  if (!/\.(m?js)$/.test(file)) continue;
+for (const directory of ['extension', 'mod', 'scripts', 'tests']) for (const file of await files(path.join(root, directory))) {
+  if (!/\.([mc]?js)$/.test(file)) continue;
   const result = spawnSync(process.execPath, ['--check', file], { stdio: 'inherit' });
   if (result.status !== 0) process.exit(result.status ?? 1);
   count++;

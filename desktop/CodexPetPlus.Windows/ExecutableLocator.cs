@@ -8,7 +8,7 @@ internal static class ExecutableLocator
     {
         var candidates = new List<string>();
         var guiPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var process in Process.GetProcessesByName("Codex"))
+        foreach (var process in Process.GetProcessesByName("Codex").Concat(Process.GetProcessesByName("ChatGPT")))
         {
             using (process)
             {

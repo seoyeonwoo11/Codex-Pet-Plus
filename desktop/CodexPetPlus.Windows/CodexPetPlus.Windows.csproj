@@ -15,5 +15,6 @@
   <ItemGroup>
     <ProjectReference Include="../CodexPetPlus.Core/CodexPetPlus.Core.csproj" />
     <Resource Include="../../extension/assets/icon128.png" Link="Assets/app.png" />
+    <EmbeddedResource Include="../../mod/runtime.cjs" LogicalName="CodexPetPlus.Mod.Runtime" />
   </ItemGroup>
 </Project>

@@ -1,9 +1,13 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
+using System.Text;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using CodexPetPlus.Core;
 
 if (args.FirstOrDefault() == "--rpc-fixture") { await Fixture(args.ElementAtOrDefault(1) ?? "normal"); return 0; }
+if (args.FirstOrDefault() == "--patch-asar") { Console.WriteLine(JsonSerializer.Serialize(AsarModPatcher.Patch(args[1], args[2], File.ReadAllText(args[3])))); return 0; }
 
 var now = DateTimeOffset.UtcNow;
 var tests = new List<(string Name, Func<Task> Run)>();
@@ -49,6 +53,87 @@ Test("physical pixel placement preserves two-times DPI dimensions", () => {
     var position = Placement.BelowPet(new(200, 200, 480, 480), new(0, 0, 3840, 2080), 360, 124, 10);
     Check(position == new PanelPosition(160, 490, false), "DPI-scaled placement is incorrect");
 });
+
+PetWindow Pet(int handle, string title = "", uint style = 0, uint extended = 0x00080008) => new((nint)handle, 123, title, new(100, 100, 260, 260), 96, "Chrome_WidgetWin_1", style, extended);
+Test("untitled and custom-named floating pets connect automatically", () => {
+    Check(PetDiscovery.Find([Pet(1)]).Window?.Handle == 1, "Untitled pet needs manual selection");
+    Check(PetDiscovery.Find([Pet(2, "모찌 고양이")]).Window?.Handle == 2, "Custom name was rejected");
+    Check(PetDiscovery.Find([Pet(3, "ChatGPT")]).Window?.Handle == 3, "ChatGPT host title was rejected");
+});
+Test("a pet name outranks generic floating windows without confusing project titles", () => {
+    Check(PetDiscovery.Find([Pet(1, "Codex Pet"), Pet(2)]).Window?.Handle == 1, "Explicit pet was not preferred");
+    Check(PetDiscovery.Find([Pet(3, "Codex Pet Plus project", 0x00C40000), Pet(4, "carpet", extended: 8)]).Window is null, "A normal window or title substring became a pet");
+    Check(PetDiscovery.Find([Pet(5, "Codex Pet") with { ClassName = "#32770" }]).Window is null, "Dialog became a pet");
+});
+Test("ambiguous custom windows wait until a saved unique selection is available", () => {
+    var windows = new[] { Pet(1, "고양이"), Pet(2, "강아지") };
+    Check(PetDiscovery.Find(windows) is { Window: null, CandidateCount: 2 }, "Ambiguous windows were guessed");
+    Check(PetDiscovery.Find(windows, "강아지", "Chrome_WidgetWin_1").Window?.Handle == 2, "Saved custom selection was lost");
+    Check(PetDiscovery.Find([Pet(3), Pet(4)], "", "Chrome_WidgetWin_1").Window is null, "Identical window signatures were guessed");
+});
+Test("pet discovery uses logical size on high DPI displays", () => {
+    var highDpi = Pet(1) with { Bounds = new(0, 0, 640, 640), Dpi = 192 };
+    Check(PetDiscovery.Find([highDpi]).Window is not null, "High DPI pet was considered too large");
+    Check(PetDiscovery.Find([highDpi with { Dpi = 96 }]).Window is null, "Large generic app window became a pet");
+});
+
+(JsonElement Header, long Offset) AsarHeader(string file)
+{
+    using var input = File.OpenRead(file); var prefix = new byte[16]; input.ReadExactly(prefix);
+    var bytes = new byte[BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(12))]; input.ReadExactly(bytes);
+    return (Json(Encoding.UTF8.GetString(bytes)), 8L + BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(4)));
+}
+string AsarText(string file, string name)
+{
+    var (header, offset) = AsarHeader(file); var entry = header;
+    foreach (var part in name.Split('/')) entry = entry.GetProperty("files").GetProperty(part);
+    using var input = File.OpenRead(file); input.Position = offset + long.Parse(entry.GetProperty("offset").GetString()!);
+    var bytes = new byte[entry.GetProperty("size").GetInt32()]; input.ReadExactly(bytes); return Encoding.UTF8.GetString(bytes);
+}
+string FixtureArchive(string kind) => Path.Combine(AppContext.BaseDirectory, "Fixtures", "app-" + kind + ".asar");
+AsyncTest("official ASAR fixture gains a CJS runtime without changing source or unpacked entries", () => WithHome(home => {
+    var source = FixtureArchive("cjs"); var before = SHA256.HashData(File.ReadAllBytes(source)); var output = Path.Combine(home, "app.asar");
+    var result = AsarModPatcher.Patch(source, output, "module.exports = 'our runtime';");
+    Check(AsarText(output, ".vite/build/main.cjs").Contains("require(\"../../codex-pet-plus-runtime.cjs\")"), "Wrong relative CJS loader");
+    Check(AsarText(output, "codex-pet-plus-runtime.cjs") == "module.exports = 'our runtime';", "Runtime was not packed");
+    Check(AsarText(output, "webview/assets/avatar-overlay-page-fixture.js").Contains("original pet renderer"), "Original pet renderer was modified");
+    Check(AsarHeader(output).Header.GetProperty("files").GetProperty("native.node").GetProperty("unpacked").GetBoolean(), "Native unpacked entry was changed");
+    Check(result.OriginalHeaderHash != result.PatchedHeaderHash && SHA256.HashData(File.ReadAllBytes(source)).SequenceEqual(before), "Source archive was modified");
+    return Task.CompletedTask;
+}));
+AsyncTest("ESM ASAR entry uses a static import and valid per-file integrity", () => WithHome(home => {
+    var output = Path.Combine(home, "app.asar"); AsarModPatcher.Patch(FixtureArchive("esm"), output, "module.exports = 42;");
+    Check(AsarText(output, ".vite/build/main.mjs").Contains("import \"../../codex-pet-plus-runtime.cjs\";"), "ESM was patched with require");
+    var entry = AsarHeader(output).Header.GetProperty("files").GetProperty("codex-pet-plus-runtime.cjs");
+    var expected = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(AsarText(output, "codex-pet-plus-runtime.cjs"))));
+    Check(entry.GetProperty("integrity").GetProperty("hash").GetString() == expected, "Per-file integrity does not match");
+    return Task.CompletedTask;
+}));
+AsyncTest("an app entry at the archive root loads the sibling runtime", () => WithHome(home => {
+    var output = Path.Combine(home, "app.asar"); AsarModPatcher.Patch(FixtureArchive("root"), output, "module.exports = 42;");
+    Check(AsarText(output, "main.cjs").Contains("require(\"./codex-pet-plus-runtime.cjs\")"), "Root entry runtime path is invalid");
+    return Task.CompletedTask;
+}));
+AsyncTest("ASAR rejects repeat patches, truncated data, and writes to the original", () => WithHome(async home => {
+    var output = Path.Combine(home, "app.asar"); AsarModPatcher.Patch(FixtureArchive("cjs"), output, "module.exports = 42;");
+    foreach (var (source, target) in new[] { (output, Path.Combine(home, "again.asar")), (output, output) })
+    {
+        try { AsarModPatcher.Patch(source, target, "runtime"); throw new Exception("Unsafe patch was accepted"); } catch (IOException) { }
+    }
+    var bad = Path.Combine(home, "bad.asar"); await File.WriteAllBytesAsync(bad, File.ReadAllBytes(FixtureArchive("cjs"))[..30]);
+    try { AsarModPatcher.Patch(bad, Path.Combine(home, "bad-output.asar"), "runtime"); throw new Exception("Truncated ASAR accepted"); } catch (IOException) { }
+    Check(!File.Exists(Path.Combine(home, "bad-output.asar")), "Failed patch left a published archive");
+}));
+AsyncTest("executable metadata accepts only the verified original ASAR hash", () => WithHome(home => {
+    var file = Path.Combine(home, "ChatGPT.exe"); var oldHash = new string('a', 64); var nextHash = new string('b', 64);
+    var original = Encoding.ASCII.GetBytes("MZ fixture {\"file\":\"resources\\\\app.asar\",\"alg\":\"SHA256\",\"value\":\"" + oldHash + "\"} end");
+    File.WriteAllBytes(file, original);
+    try { AsarModPatcher.UpdateExecutableIntegrity(file, new string('c', 64), nextHash); throw new Exception("Mismatched integrity accepted"); } catch (IOException) { }
+    Check(File.ReadAllBytes(file).SequenceEqual(original), "Rejected executable was modified");
+    AsarModPatcher.UpdateExecutableIntegrity(file, oldHash, nextHash);
+    Check(Encoding.ASCII.GetString(File.ReadAllBytes(file)) == Encoding.ASCII.GetString(original).Replace(oldHash, nextHash), "Executable bytes outside the integrity value changed");
+    return Task.CompletedTask;
+}));
 
 string Record(int percent, DateTimeOffset at, string limit = "codex") => JsonSerializer.Serialize(new { timestamp = at, type = "event_msg", payload = new { type = "token_count", rate_limits = new { limit_id = limit, primary = new { used_percent = percent, window_minutes = 300, resets_at = at.AddHours(2).ToUnixTimeSeconds() } } } });
 async Task WithHome(Func<string, Task> action)

@@ -36,7 +36,7 @@ public sealed class CodexConnection : IAsyncDisposable
         var connection = new CodexConnection(process, timeout);
         try
         {
-            var initialized = await connection.Request("initialize", new { clientInfo = new { name = "codex_pet_plus", title = "Codex Pet Plus", version = "0.3.0" }, capabilities = new { experimentalApi = false } }, cancellation);
+            var initialized = await connection.Request("initialize", new { clientInfo = new { name = "codex_pet_plus", title = "Codex Pet Plus", version = "0.4.0" }, capabilities = new { experimentalApi = false } }, cancellation);
             if (initialized.TryGetProperty("codexHome", out var home) && home.ValueKind == JsonValueKind.String) connection.CodexHome = home.GetString();
             await connection.Write(new { method = "initialized" }, cancellation);
             return connection;
