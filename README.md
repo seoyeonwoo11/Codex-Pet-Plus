@@ -4,6 +4,8 @@
 
 이 설치기는 요청하신 **앱 버전 26.1023.51421**, Windows 10/11 x64를 대상으로 합니다. 다른 버전이나 지원하지 않는 패키지 구조이면 설치를 중단합니다. 실제 해당 앱 패키지가 이 클라우드 환경에 없어, 사용자 PC에서 최종 호환성을 확인해야 하는 초기 버전입니다.
 
+**설치기 0.4.1**은 앱 패키지의 실제 버전 정보를 읽습니다. EXE에 표시되는 브라우저 엔진 버전(예: 156.0.8078.48)과 Windows 설치 폴더의 패키지 버전을 앱 버전으로 사용하지 않습니다. 설치 화면에서 **설치기 0.4.1**과 **감지한 앱 버전**을 확인하세요.
+
 ## 다운로드와 설치
 
 1. 일반 크롬에서 GitHub에 로그인한 뒤 [Windows 빌드 페이지](https://github.com/seoyeonwoo11/Codex-Pet-Plus/actions/workflows/windows-desktop.yml)를 엽니다.
@@ -48,7 +50,7 @@ npm run test:mod
 dotnet run --project desktop/CodexPetPlus.Tests/CodexPetPlus.Tests.csproj -c Release
 ~~~
 
-코어 테스트 25개, 모드 런타임 테스트 8개를 제공합니다. 공식 ASAR 도구가 만든 합성 앱에 패치를 적용하고 실제 Electron에서 자동 연결·이동·숨김·커스텀 펫 재연결·알 수 없는 한도 표시도 검증합니다. 합성 테스트에는 ChatGPT/Codex 소스나 계정이 들어 있지 않습니다. Windows CI는 빌드와 이 테스트를 실행한 뒤 ZIP 파일을 제공합니다.
+코어 테스트 28개, 모드 런타임 테스트 8개를 제공합니다. 공식 ASAR 도구가 만든 합성 앱에 패치를 적용하고 실제 Electron에서 자동 연결·이동·숨김·커스텀 펫 재연결·알 수 없는 한도 표시도 검증합니다. 합성 테스트에는 ChatGPT/Codex 소스나 계정이 들어 있지 않습니다. Windows CI는 빌드와 이 테스트를 실행한 뒤 ZIP 파일을 제공합니다.
 
 실제 Electron 테스트를 로컬에서 재현하려면 Node.js 24와 임시 도구 폴더를 사용합니다.
 

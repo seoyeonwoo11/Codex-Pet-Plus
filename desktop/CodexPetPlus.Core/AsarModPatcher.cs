@@ -14,24 +14,24 @@ public static class AsarModPatcher
     private const int BlockSize = 4 * 1024 * 1024;
     private sealed record Entry(string Name, JsonObject Node, long Size, long Offset, bool Packed);
 
+    public static string ReadPackageVersion(string archiveFile)
+    {
+        using var source = File.OpenRead(archiveFile);
+        var (_, _, entries, dataOffset, _) = ReadArchive(source);
+        var package = entries.SingleOrDefault(entry => entry.Name == "package.json") ?? throw new IOException("앱 패키지에 버전 정보가 없습니다.");
+        var metadata = JsonNode.Parse(ReadEntry(source, package, dataOffset, 1024 * 1024));
+        if (metadata is not JsonObject obj || obj["version"] is not JsonValue value
+            || !value.TryGetValue<string>(out var version) || string.IsNullOrWhiteSpace(version) || version.Length > 128)
+            throw new IOException("앱 패키지에서 실제 앱 버전을 확인하지 못했습니다.");
+        return version;
+    }
+
     public static AsarPatchResult Patch(string sourceFile, string destinationFile, string runtime)
     {
         if (Path.GetFullPath(sourceFile).Equals(Path.GetFullPath(destinationFile), StringComparison.OrdinalIgnoreCase))
             throw new IOException("앱 원본과 다른 위치에 복사본을 만들어야 합니다.");
         using var source = File.OpenRead(sourceFile);
-        var prefix = new byte[16]; source.ReadExactly(prefix);
-        var headerSize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(4));
-        var jsonSize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(12));
-        if (BinaryPrimitives.ReadUInt32LittleEndian(prefix) != 4 || headerSize is < 8 or > 32 * 1024 * 1024
-            || jsonSize > headerSize - 8 || BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(8)) != headerSize - 4)
-            throw new IOException("지원하는 Electron 앱 패키지 형식이 아닙니다.");
-        var dataOffset = 8L + headerSize;
-        if (dataOffset > source.Length) throw new IOException("앱 패키지가 잘렸습니다.");
-        var headerBytes = new byte[jsonSize]; source.ReadExactly(headerBytes);
-        var root = JsonNode.Parse(headerBytes)?.AsObject() ?? throw new IOException("앱 패키지 헤더를 읽을 수 없습니다.");
-        var files = root["files"]?.AsObject() ?? throw new IOException("앱 패키지 파일 목록이 없습니다.");
-        var entries = new List<Entry>();
-        Walk(files, "", entries, 0);
+        var (root, files, entries, dataOffset, headerBytes) = ReadArchive(source);
         if (entries.Any(entry => entry.Name == RuntimeName)) throw new IOException("이미 모드가 적용된 복사본입니다. 공식 앱 원본을 선택해 주세요.");
         var package = entries.SingleOrDefault(entry => entry.Name == "package.json") ?? throw new IOException("앱 메타데이터가 없습니다.");
         var metadata = JsonNode.Parse(ReadEntry(source, package, dataOffset, 1024 * 1024))?.AsObject() ?? throw new IOException("앱 메타데이터를 읽을 수 없습니다.");
@@ -114,6 +114,23 @@ public static class AsarModPatcher
         if (parts.Length == 0 || parts.Any(part => part.Length == 0 || part == ".." || part.Contains(':')))
             throw new IOException("지원하지 않는 앱 시작 경로입니다.");
         return string.Join('/', parts);
+    }
+
+    private static (JsonObject Root, JsonObject Files, List<Entry> Entries, long DataOffset, byte[] HeaderBytes) ReadArchive(Stream source)
+    {
+        var prefix = new byte[16]; source.ReadExactly(prefix);
+        var headerSize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(4));
+        var jsonSize = BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(12));
+        if (BinaryPrimitives.ReadUInt32LittleEndian(prefix) != 4 || headerSize is < 8 or > 32 * 1024 * 1024
+            || jsonSize > headerSize - 8 || BinaryPrimitives.ReadUInt32LittleEndian(prefix.AsSpan(8)) != headerSize - 4)
+            throw new IOException("지원하는 Electron 앱 패키지 형식이 아닙니다.");
+        var dataOffset = 8L + headerSize;
+        if (dataOffset > source.Length) throw new IOException("앱 패키지가 잘렸습니다.");
+        var headerBytes = new byte[jsonSize]; source.ReadExactly(headerBytes);
+        var root = JsonNode.Parse(headerBytes)?.AsObject() ?? throw new IOException("앱 패키지 헤더를 읽을 수 없습니다.");
+        var files = root["files"]?.AsObject() ?? throw new IOException("앱 패키지 파일 목록이 없습니다.");
+        var entries = new List<Entry>(); Walk(files, "", entries, 0);
+        return (root, files, entries, dataOffset, headerBytes);
     }
 
     private static void Walk(JsonObject directory, string prefix, List<Entry> entries, int depth)

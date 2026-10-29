@@ -91,6 +91,35 @@ string AsarText(string file, string name)
     var bytes = new byte[entry.GetProperty("size").GetInt32()]; input.ReadExactly(bytes); return Encoding.UTF8.GetString(bytes);
 }
 string FixtureArchive(string kind) => Path.Combine(AppContext.BaseDirectory, "Fixtures", "app-" + kind + ".asar");
+AsyncTest("app version comes from ASAR rather than browser EXE or MSIX folder versions", () => WithHome(home => {
+    var app = Path.Combine(home, "OpenAI.Codex_26.1023.6621.0_x64__fixture", "app");
+    Directory.CreateDirectory(Path.Combine(app, "resources"));
+    var executable = Path.Combine(app, "ChatGPT.exe");
+    File.WriteAllText(executable, "Browser engine version fixture: 156.0.8078.48");
+    File.Copy(FixtureArchive("cjs"), Path.Combine(app, "resources", "app.asar"));
+    var original = File.ReadAllBytes(Path.Combine(app, "resources", "app.asar"));
+    Check(DesktopAppVersion.ReadFromExecutable(executable) == "26.1023.51421", "Executable or MSIX version replaced the real app version");
+    Check(File.ReadAllBytes(Path.Combine(app, "resources", "app.asar")).SequenceEqual(original), "Version detection changed the original archive");
+    return Task.CompletedTask;
+}));
+Test("app version normalizes equivalent build forms and rejects incomplete versions", () => {
+    foreach (var value in new[] { "26.1023.51421", "26.1023.51421.0", " v26.1023.51421+build.123 " })
+        Check(DesktopAppVersion.Normalize(value) == "26.1023.51421", "Equivalent app versions did not match");
+    Check(DesktopAppVersion.Normalize("26.1023.51421.1") != "26.1023.51421", "A different revision was accepted");
+    Check(DesktopAppVersion.Normalize("156.0.8078.48") != "26.1023.51421", "Runtime number became the supported app version");
+    foreach (var value in new[] { "", "latest", "26.1023" })
+    {
+        try { DesktopAppVersion.Normalize(value); throw new Exception("Incomplete version accepted"); } catch (IOException) { }
+    }
+});
+AsyncTest("missing package version stays unknown despite a versioned install folder", () => WithHome(home => {
+    var app = Path.Combine(home, "OpenAI.Codex_26.1023.51421.0", "app");
+    Directory.CreateDirectory(Path.Combine(app, "resources"));
+    File.Copy(FixtureArchive("no-version"), Path.Combine(app, "resources", "app.asar"));
+    try { DesktopAppVersion.ReadFromExecutable(Path.Combine(app, "ChatGPT.exe")); throw new Exception("Unknown package version was guessed"); }
+    catch (IOException) { }
+    return Task.CompletedTask;
+}));
 AsyncTest("official ASAR fixture gains a CJS runtime without changing source or unpacked entries", () => WithHome(home => {
     var source = FixtureArchive("cjs"); var before = SHA256.HashData(File.ReadAllBytes(source)); var output = Path.Combine(home, "app.asar");
     var result = AsarModPatcher.Patch(source, output, "module.exports = 'our runtime';");

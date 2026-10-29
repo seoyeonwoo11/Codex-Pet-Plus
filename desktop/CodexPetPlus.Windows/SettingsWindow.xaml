@@ -5,6 +5,7 @@
     <Border Background="White" BorderBrush="#E0E5D8" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,18"><StackPanel>
       <TextBlock Text="ChatGPT / Codex 앱 모드" FontSize="17" FontWeight="SemiBold" Foreground="#2C3428"/>
       <TextBlock x:Name="ModVersionText" Margin="0,8,0,12" FontSize="12" Foreground="#64794D"/>
+      <TextBlock x:Name="DetectedAppVersionText" Text="감지한 앱 버전: 확인 중" Margin="0,0,0,12" FontSize="12" Foreground="#64794D" TextWrapping="Wrap"/>
       <TextBlock Text="앱 실행 파일 · 실행 중인 앱이나 설치된 Windows 패키지에서 자동 검색" FontSize="11" Foreground="#7C8772" TextWrapping="Wrap"/>
       <DockPanel Margin="0,7,0,14"><Button Content="찾기…" DockPanel.Dock="Right" Margin="8,0,0,0" Click="ChooseDesktopApp"/><TextBox x:Name="DesktopAppPath"/></DockPanel>
       <WrapPanel><Button x:Name="InstallModButton" Content="모드 설치 / 다시 설치" Click="InstallMod"/><Button x:Name="LaunchModButton" Content="모드 앱 실행" Click="LaunchMod"/><Button Content="상태 확인" Click="CheckModStatus"/><Button Content="설치 폴더 열기" Click="OpenModFolder"/></WrapPanel>

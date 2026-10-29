@@ -94,7 +94,7 @@ class QuotaClient {
       if (Object.hasOwn(message, 'result')) request.resolve(message.result);
       else request.reject(new Error('한도를 조회하지 못했습니다.'));
     });
-    await this.request('initialize', { clientInfo: { name: 'codex_pet_plus_mod', title: 'Codex Pet Plus', version: '0.4.0' }, capabilities: { experimentalApi: false } });
+    await this.request('initialize', { clientInfo: { name: 'codex_pet_plus_mod', title: 'Codex Pet Plus', version: '0.4.1' }, capabilities: { experimentalApi: false } });
     this.write({ method: 'initialized' });
   }
   write(value) { if (this.child && !this.child.killed && !this.child.stdin.destroyed) this.child.stdin.write(JSON.stringify(value) + '\n'); }

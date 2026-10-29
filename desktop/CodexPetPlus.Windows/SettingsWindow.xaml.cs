@@ -15,7 +15,9 @@ public partial class SettingsWindow : Window
         RecordsPath.Text = app.Preferences.RecordsHome;
         RecentRecords.IsChecked = app.Preferences.UseRecentRecords;
         CompanionOverlay.IsChecked = app.Preferences.UseCompanionOverlay;
-        ModVersionText.Text = "대상 버전: " + DesktopModInstaller.TargetVersion;
+        var installerVersion = typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.4.1";
+        Title = "Codex Pet Plus " + installerVersion;
+        ModVersionText.Text = "대상 버전: " + DesktopModInstaller.TargetVersion + " · 설치기 " + installerVersion;
         UpdateStatus();
         app.StatusChanged += UpdateStatus;
         Closed += (_, _) => { app.StatusChanged -= UpdateStatus; closing.Cancel(); };
@@ -27,6 +29,7 @@ public partial class SettingsWindow : Window
                 if (installed is not null) ModStatusText.Text = installed.Version + " 모드가 설치돼 있습니다.";
                 var source = await DesktopModInstaller.FindSourceAsync();
                 if (string.IsNullOrWhiteSpace(DesktopAppPath.Text)) DesktopAppPath.Text = source ?? "";
+                ShowDetectedVersion();
                 if (installed is null) ModStatusText.Text = source is null ? "앱을 켜거나 ‘찾기…’에서 설치된 앱 실행 파일을 선택해 주세요." : "앱을 찾았습니다. ‘모드 설치’를 눌러 복사본에 설치하세요.";
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -35,16 +38,23 @@ public partial class SettingsWindow : Window
     }
     private void UpdateStatus() { PetStatusText.Text = app.PetStatus; UsageStatusText.Text = app.UsageStatus; }
     private void FindPet(object sender, RoutedEventArgs args) => app.FindPetAgain();
+    private void ShowDetectedVersion()
+    {
+        try { DetectedAppVersionText.Text = "감지한 앱 버전: " + DesktopModInstaller.VersionOf(DesktopAppPath.Text.Trim()); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or JsonException or FormatException or OverflowException)
+        { DetectedAppVersionText.Text = "앱 버전을 확인하지 못했습니다. 설치된 앱의 실행 파일을 선택해 주세요."; }
+    }
     private void ChooseDesktopApp(object sender, RoutedEventArgs args)
     {
         var dialog = new Microsoft.Win32.OpenFileDialog { Title = "설치된 ChatGPT / Codex 앱 선택", Filter = "앱 실행 파일|ChatGPT.exe;Codex.exe", CheckFileExists = true };
-        if (dialog.ShowDialog(this) == true) DesktopAppPath.Text = dialog.FileName;
+        if (dialog.ShowDialog(this) == true) { DesktopAppPath.Text = dialog.FileName; ShowDetectedVersion(); }
     }
     private async void InstallMod(object sender, RoutedEventArgs args)
     {
         InstallModButton.IsEnabled = false; LaunchModButton.IsEnabled = false;
         try
         {
+            ShowDetectedVersion();
             await DesktopModInstaller.InstallAsync(DesktopAppPath.Text.Trim(), new Progress<string>(message => ModStatusText.Text = message), closing.Token);
         }
         catch (OperationCanceledException) { ModStatusText.Text = "설치를 취소했습니다."; }

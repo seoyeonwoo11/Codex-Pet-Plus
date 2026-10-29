@@ -25,12 +25,7 @@ internal static class DesktopModInstaller
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { return null; }
     }
 
-    public static string VersionOf(string executable)
-    {
-        var info = FileVersionInfo.GetVersionInfo(executable);
-        var version = info.ProductVersion ?? info.FileVersion ?? "";
-        return version.Split('+', ' ', '-')[0].TrimEnd('.');
-    }
+    public static string VersionOf(string executable) => DesktopAppVersion.ReadFromExecutable(executable);
 
     public static string Status()
     {
@@ -93,7 +88,7 @@ internal static class DesktopModInstaller
         executable = Path.GetFullPath(executable);
         if (!IsSource(executable)) throw new IOException("공식 앱 설치 폴더의 ChatGPT.exe 또는 Codex.exe를 선택해 주세요.");
         var version = VersionOf(executable);
-        if (version != TargetVersion && version != TargetVersion + ".0")
+        if (version != TargetVersion)
             throw new IOException($"이 설치기는 {TargetVersion}용입니다. 선택한 앱 버전은 {version}입니다.");
         var source = Path.GetDirectoryName(executable)!;
         if (Path.GetFullPath(Root).StartsWith(source + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
