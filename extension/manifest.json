@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Codex Pet Plus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Codex의 남은 사용량, 프로젝트, 작업 상태를 한눈에 확인하세요.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "scripting", "alarms", "sidePanel"],
+  "optional_permissions": ["notifications"],
   "host_permissions": ["https://chatgpt.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "Codex Pet Plus" },

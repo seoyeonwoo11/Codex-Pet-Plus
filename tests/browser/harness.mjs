@@ -13,6 +13,11 @@ export async function harness(context) {
   const alarms = new Map();
   const listeners = [];
   const tabsUpdated = [];
+  const permissionsRemoved = [];
+  const notifications = [];
+  let notificationsAllowed = false;
+  let grantNotificationRequests = true;
+  let notificationLevel = 'granted';
   const tabIds = new Map();
   let badge = '';
   const storage = area => ({
@@ -37,6 +42,7 @@ export async function harness(context) {
   const api = {
     runtime: {
       id, onInstalled: { addListener() {} }, onStartup: { addListener() {} },
+      getURL(file) { return TEST_ORIGIN + '/' + file; },
       onMessage: { addListener(listener) { listeners.push(listener); } },
     },
     storage: { local: storage('local'), session: storage('session') },
@@ -53,12 +59,25 @@ export async function harness(context) {
     },
     action: { async setBadgeText({ text }) { badge = text; }, async setBadgeBackgroundColor() {}, async setTitle() {} },
     alarms: { async create(name, options) { alarms.set(name, options); }, async clear(name) { return alarms.delete(name); }, onAlarm: { addListener() {} } },
+    permissions: {
+      async contains() { return notificationsAllowed; },
+      onRemoved: { addListener(listener) { permissionsRemoved.push(listener); } },
+    },
+    notifications: {
+      async getPermissionLevel() { return notificationLevel; },
+      async create(id, options) {
+        if (!notificationsAllowed || notificationLevel !== 'granted') throw new Error('Notification permission denied');
+        notifications.push(structuredClone({ id, options }));
+        return id;
+      },
+    },
   };
   globalThis.chrome = api;
   await import('../../extension/background.js?test=' + Date.now() + Math.random());
   await context.exposeBinding('__petCall', async (_source, message) => {
     if (message.type === '__options') return createTab({ url: TEST_ORIGIN + '/options.html' });
     if (message.type === '__tab') return createTab({ url: message.url });
+    if (message.type === '__request_notifications') { notificationsAllowed = grantNotificationRequests; return notificationsAllowed; }
     return new Promise(resolve => listeners[0](message, { id }, resolve));
   });
   await context.addInitScript(id => {
@@ -70,6 +89,7 @@ export async function harness(context) {
       tabs: { create: ({ url }) => window.__petCall({ type: '__tab', url }) },
       windows: { getCurrent: async () => ({ id: 1 }) },
       sidePanel: { open: async () => {} },
+      permissions: { request: () => window.__petCall({ type: '__request_notifications' }) },
     };
   }, id);
   await context.route(TEST_ORIGIN + '/**', async route => {
@@ -85,5 +105,13 @@ export async function harness(context) {
     id,
     inspect() { return structuredClone({ local: areas.local, session: areas.session, badge }); },
     disconnected() { return structuredClone({ state: areas.session.state, alarm: alarms.get('refresh') }); },
+    notifications() { return structuredClone(notifications); },
+    denyNotificationRequests() { grantNotificationRequests = false; },
+    blockNotifications() { notificationLevel = 'denied'; },
+    revokeNotificationPermission() { notificationsAllowed = false; for (const listener of permissionsRemoved) listener({ permissions: ['notifications'] }); },
+    async restartWorker() {
+      listeners.length = 0; tabsUpdated.length = 0; permissionsRemoved.length = 0;
+      await import('../../extension/background.js?test=' + Date.now() + Math.random());
+    },
   };
 }

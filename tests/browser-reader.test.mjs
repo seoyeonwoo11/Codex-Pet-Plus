@@ -15,8 +15,17 @@ test('session token is used only in same-site requests and never returned', asyn
   assert.equal(calls.length, 3);
   assert.equal(calls[1].options.headers.Authorization, 'Bearer TEST_PRIVATE_TOKEN');
   assert.ok(calls.every(call => call.url.startsWith('/') && call.options.credentials === 'same-origin'));
-  assert.doesNotMatch(JSON.stringify(result), /TEST_PRIVATE_TOKEN|private@example|PRIVATE_ACCOUNT_DATA|accessToken/);
+  assert.doesNotMatch(JSON.stringify(result), /TEST_PRIVATE_TOKEN|private@example|PRIVATE_ACCOUNT_DATA|accessToken|account-test/);
+  assert.match(result.accountKey, /^[a-f0-9]{64}$/);
   assert.equal(result.usage.rate_limit.primary_window.used_percent, 28);
+});
+test('alert account key is stable per account and changes without exposing identity', async t => {
+  let account = 'account-a';
+  t.mock.method(globalThis, 'fetch', async url => Response.json(url === '/api/auth/session' ? { accessToken: 'test', account: { id: account } } : url.includes('/usage') ? webUsage() : webTasks()));
+  const first = await readChatGPT();
+  assert.equal((await readChatGPT()).accountKey, first.accountKey);
+  account = 'account-b';
+  assert.notEqual((await readChatGPT()).accountKey, first.accountKey);
 });
 test('signed-out session makes no quota or task requests', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({}));

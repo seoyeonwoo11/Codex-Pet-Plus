@@ -16,6 +16,13 @@ export async function readChatGPT() {
   try {
     const session = await request('/api/auth/session');
     if (typeof session?.accessToken !== 'string' || !session.accessToken) return { ok: false, code: 'login_required' };
+    // Scope quota alerts without returning account IDs, email, or credentials.
+    let accountKey = null;
+    const identity = [session.account?.id, session.user?.id].map(value => typeof value === 'string' && value ? value : null);
+    if (identity.some(Boolean)) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(identity)));
+      accountKey = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
     const headers = { Authorization: `Bearer ${session.accessToken}` };
     if (typeof session.account?.id === 'string') headers['ChatGPT-Account-Id'] = session.account.id;
     const results = await Promise.allSettled([
@@ -30,6 +37,7 @@ export async function readChatGPT() {
     const window = raw => raw ? { used_percent: raw.used_percent, limit_window_seconds: raw.limit_window_seconds, reset_at: raw.reset_at } : null;
     return {
       ok: true,
+      accountKey,
       usage: usageValid ? { plan_type: usage.plan_type, rate_limit: usage.rate_limit ? { primary_window: window(usage.rate_limit.primary_window), secondary_window: window(usage.rate_limit.secondary_window) } : null } : null,
       tasks: tasksValid ? { cursor: tasks.cursor, items: tasks.items.slice(0, 50).filter(item => item && typeof item === 'object').map(item => ({ id: item.id, title: item.title, updated_at: item.updated_at, task_status_display: { environment_label: item.task_status_display?.environment_label, state: item.task_status_display?.state, latest_turn_status_display: { turn_status: item.task_status_display?.latest_turn_status_display?.turn_status } } })) } : null,
       usageError: results[0].status === 'rejected' ? failure(results[0].reason).code : (usageValid ? null : 'unexpected_response'),
