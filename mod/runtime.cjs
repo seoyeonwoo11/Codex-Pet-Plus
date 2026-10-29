@@ -94,7 +94,7 @@ class QuotaClient {
       if (Object.hasOwn(message, 'result')) request.resolve(message.result);
       else request.reject(new Error('한도를 조회하지 못했습니다.'));
     });
-    await this.request('initialize', { clientInfo: { name: 'codex_pet_plus_mod', title: 'Codex Pet Plus', version: '0.4.1' }, capabilities: { experimentalApi: false } });
+    await this.request('initialize', { clientInfo: { name: 'codex_pet_plus_mod', title: 'Codex Pet Plus', version: '0.5.0' }, capabilities: { experimentalApi: false } });
     this.write({ method: 'initialized' });
   }
   write(value) { if (this.child && !this.child.killed && !this.child.stdin.destroyed) this.child.stdin.write(JSON.stringify(value) + '\n'); }
@@ -130,23 +130,35 @@ function render(snapshot) {
   document.getElementById('source').textContent = snapshot ? '앱 연결 · 남은 Codex 한도' : '한도 조회 필요 · 로그인 확인';
 }
 
-function start(electron, resources = process.resourcesPath, client = new QuotaClient()) {
+function start(electron, resources = process.resourcesPath, client = new QuotaClient(), stateDirectory) {
   const { app, BrowserWindow, screen } = electron;
+  if (stateDirectory === undefined) stateDirectory = process.env.PET_PLUS_MOD_STATE_DIR
+    || (process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'CodexPetPlus', 'mod')
+      : typeof app.getPath === 'function' ? path.join(app.getPath('userData'), 'CodexPetPlus', 'mod') : null);
   const seen = new WeakSet(), panels = new Map();
+  // Guard only this addon's callbacks; do not intercept the host app's errors.
+  const safely = action => { try { return action(); } catch { return undefined; } };
   let snapshot = null, busy = false, stopped = false, interval, observed = 0;
   function report() {
-    try { fs.writeFileSync(path.join(resources, 'pet-plus-status.json'), JSON.stringify({ running: !stopped, processId: process.pid, appVersion: app.getVersion?.() ?? '', petWindows: panels.size, observedWindows: observed, quotaAvailable: snapshot != null, updatedAt: new Date().toISOString() })); } catch { }
+    if (!stateDirectory) return;
+    try {
+      fs.mkdirSync(stateDirectory, { recursive: true });
+      fs.writeFileSync(path.join(stateDirectory, 'runtime-status.json'), JSON.stringify({ running: !stopped, processId: process.pid, appVersion: app.getVersion?.() ?? '', petWindows: panels.size, observedWindows: observed, quotaAvailable: snapshot != null, updatedAt: new Date().toISOString() }));
+    } catch { }
   }
   const paint = panel => {
-    if (!panel.isDestroyed() && !panel.webContents.isLoading()) panel.webContents.executeJavaScript('(' + render.toString() + ')(' + JSON.stringify(snapshot) + ')').catch(() => {});
+    safely(() => { if (!panel.isDestroyed() && !panel.webContents.isLoading()) panel.webContents.executeJavaScript('(' + render.toString() + ')(' + JSON.stringify(snapshot) + ')').catch(() => {}); });
   };
   function follow(pet, panel) {
+    safely(() => {
     if (pet.isDestroyed() || panel.isDestroyed()) return;
     if (!isPetPage(pet.webContents.getURL()) || !pet.isVisible() || pet.isMinimized()) { panel.hide(); return; }
     const bounds = placement(pet.getBounds(), screen.getDisplayMatching(pet.getBounds()).workArea);
     panel.setBounds(bounds, false); if (!panel.isVisible()) panel.showInactive();
+    });
   }
   function attach(pet) {
+    safely(() => {
     if (stopped || pet.isDestroyed() || !isPetPage(pet.webContents.getURL()) || panels.has(pet)) return;
     const panel = new BrowserWindow({ width: 180, height: 62, show: false, frame: false, transparent: true, resizable: false,
       focusable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: false, parent: pet,
@@ -156,15 +168,18 @@ function start(electron, resources = process.resourcesPath, client = new QuotaCl
     panel.webContents.on('will-navigate', event => event.preventDefault());
     const update = () => follow(pet, panel);
     for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore']) pet.on(event, update);
-    pet.once('closed', () => { for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore']) pet.removeListener(event, update); panels.delete(pet); if (!panel.isDestroyed()) panel.destroy(); report(); });
+    pet.once('closed', () => { for (const event of ['move', 'resize', 'show', 'hide', 'minimize', 'restore']) pet.removeListener(event, update); panels.delete(pet); safely(() => { if (!panel.isDestroyed()) panel.destroy(); }); report(); });
     panel.webContents.on('did-finish-load', () => { paint(panel); update(); });
     panel.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html)).catch(() => {});
+    });
   }
   function observe(_event, window) {
+    safely(() => {
     if (seen.has(window)) return; seen.add(window); observed++;
     window.webContents.on('did-finish-load', () => attach(window));
     window.webContents.on('did-navigate', () => { attach(window); if (panels.has(window)) follow(window, panels.get(window)); });
     attach(window);
+    });
   }
   async function refresh() {
     if (busy || stopped) return; busy = true;
@@ -186,7 +201,7 @@ function start(electron, resources = process.resourcesPath, client = new QuotaCl
     refresh(); interval = setInterval(() => { for (const [pet, panel] of panels) follow(pet, panel); }, 200); interval.unref?.();
   }).catch(() => {});
   const usageTimer = setInterval(refresh, 60000); usageTimer.unref?.();
-  const stop = () => { if (stopped) return; stopped = true; process.removeListener('exit', stop); clearInterval(interval); clearInterval(usageTimer); app.removeListener('browser-window-created', observe); client.stop(); for (const panel of panels.values()) if (!panel.isDestroyed()) panel.destroy(); panels.clear(); report(); };
+  const stop = () => { if (stopped) return; stopped = true; process.removeListener('exit', stop); clearInterval(interval); clearInterval(usageTimer); app.removeListener('browser-window-created', observe); safely(() => client.stop()); for (const panel of panels.values()) safely(() => { if (!panel.isDestroyed()) panel.destroy(); }); panels.clear(); report(); };
   process.once('exit', stop);
   app.once('will-quit', stop);
   return { stop, refresh };

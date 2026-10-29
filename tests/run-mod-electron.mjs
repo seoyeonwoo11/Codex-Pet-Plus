@@ -22,7 +22,7 @@ try {
   assert.equal(asar.extractFile(patched, 'codex-pet-plus-runtime.cjs').toString(), await readFile(path.join(root, 'mod/runtime.cjs'), 'utf8'));
   assert.equal(asar.extractFile(patched, 'index.html').toString(), await readFile(path.join(source, 'index.html'), 'utf8'));
   const flags = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
-  const run = spawnSync(electron, [...flags, patched], { encoding: 'utf8', timeout: 30000, env: { ...process.env, PET_MOD_SMOKE_DIR: directory }, maxBuffer: 1024 * 1024 });
+  const run = spawnSync(electron, [...flags, patched], { encoding: 'utf8', timeout: 30000, env: { ...process.env, PET_MOD_SMOKE_DIR: directory, PET_PLUS_MOD_STATE_DIR: path.join(directory, 'state') }, maxBuffer: 1024 * 1024 });
   if (run.status !== 0 || !run.stdout.includes('MOD_SMOKE_PASS')) throw new Error((run.stdout || '') + (run.stderr || '') + (run.error || ''));
   console.log(run.stdout.trim());
   if (process.env.PET_MOD_SCREENSHOT) await cp(path.join(directory, 'quota-panel.png'), process.env.PET_MOD_SCREENSHOT);

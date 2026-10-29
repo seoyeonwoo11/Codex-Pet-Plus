@@ -178,6 +178,7 @@ public partial class App : System.Windows.Application
 
     private async void Quit()
     {
+        if (settings?.IsModOperationRunning == true) { OpenSettings(); settings.ShowBusyNotice(); return; }
         if (closing) return;
         closing = true; followTimer.Stop(); usageTimer.Stop(); lifetime.Cancel();
         await quotaGate.WaitAsync();

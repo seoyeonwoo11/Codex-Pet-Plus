@@ -8,6 +8,7 @@ public partial class SettingsWindow : Window
 {
     private readonly App app;
     private readonly CancellationTokenSource closing = new();
+    internal bool IsModOperationRunning { get; private set; }
     internal SettingsWindow(App app)
     {
         InitializeComponent(); this.app = app;
@@ -15,22 +16,23 @@ public partial class SettingsWindow : Window
         RecordsPath.Text = app.Preferences.RecordsHome;
         RecentRecords.IsChecked = app.Preferences.UseRecentRecords;
         CompanionOverlay.IsChecked = app.Preferences.UseCompanionOverlay;
-        var installerVersion = typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.4.1";
+        var installerVersion = typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3) ?? "0.5.0";
         Title = "Codex Pet Plus " + installerVersion;
         ModVersionText.Text = "대상 버전: " + DesktopModInstaller.TargetVersion + " · 설치기 " + installerVersion;
         UpdateStatus();
         app.StatusChanged += UpdateStatus;
         Closed += (_, _) => { app.StatusChanged -= UpdateStatus; closing.Cancel(); };
+        Closing += (_, args) => { if (IsModOperationRunning) { args.Cancel = true; ShowBusyNotice(); } };
         Loaded += async (_, _) =>
         {
             try
             {
                 var installed = DesktopModInstaller.Current();
-                if (installed is not null) ModStatusText.Text = installed.Version + " 모드가 설치돼 있습니다.";
+                if (installed is not null) ModStatusText.Text = installed.Mode == "direct" ? "기존 앱에 패치 기록이 있습니다. 상태 확인 또는 원본 복원을 사용할 수 있습니다." : "이전 복사본 모드 기록이 있습니다. 원본 앱에 직접 패치하면 종료된 복사본을 정리합니다.";
                 var source = await DesktopModInstaller.FindSourceAsync();
                 if (string.IsNullOrWhiteSpace(DesktopAppPath.Text)) DesktopAppPath.Text = source ?? "";
                 ShowDetectedVersion();
-                if (installed is null) ModStatusText.Text = source is null ? "앱을 켜거나 ‘찾기…’에서 설치된 앱 실행 파일을 선택해 주세요." : "앱을 찾았습니다. ‘모드 설치’를 눌러 복사본에 설치하세요.";
+                if (installed is null) ModStatusText.Text = source is null ? "앱을 켜거나 ‘찾기…’에서 설치된 앱 실행 파일을 선택해 주세요." : "앱을 찾았습니다. 앱을 완전히 종료한 뒤 ‘앱에 패치’를 누르세요.";
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             { ModStatusText.Text = "앱 실행 파일을 자동으로 찾지 못했습니다. ‘찾기…’에서 선택해 주세요."; }
@@ -40,9 +42,14 @@ public partial class SettingsWindow : Window
     private void FindPet(object sender, RoutedEventArgs args) => app.FindPetAgain();
     private void ShowDetectedVersion()
     {
-        try { DetectedAppVersionText.Text = "감지한 앱 버전: " + DesktopModInstaller.VersionOf(DesktopAppPath.Text.Trim()); }
+        try
+        {
+            var file = DesktopAppPath.Text.Trim();
+            DetectedAppVersionText.Text = "감지한 앱 버전: " + DesktopModInstaller.VersionOf(file);
+            ModStorageText.Text = $"앱 전체 복사 없음 · 파일 교체에 필요한 임시 공간 약 {DesktopModInstaller.TemporaryBytes(file) / 1024d / 1024d:0.#} MB · 변경 정보만 압축 백업";
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or JsonException or FormatException or OverflowException)
-        { DetectedAppVersionText.Text = "앱 버전을 확인하지 못했습니다. 설치된 앱의 실행 파일을 선택해 주세요."; }
+        { DetectedAppVersionText.Text = "앱 버전을 확인하지 못했습니다. 설치된 앱의 실행 파일을 선택해 주세요."; ModStorageText.Text = "앱 전체 복사 없이 직접 패치합니다."; }
     }
     private void ChooseDesktopApp(object sender, RoutedEventArgs args)
     {
@@ -51,30 +58,52 @@ public partial class SettingsWindow : Window
     }
     private async void InstallMod(object sender, RoutedEventArgs args)
     {
-        InstallModButton.IsEnabled = false; LaunchModButton.IsEnabled = false;
+        if (IsModOperationRunning) return; SetModBusy(true);
         try
         {
             ShowDetectedVersion();
             await DesktopModInstaller.InstallAsync(DesktopAppPath.Text.Trim(), new Progress<string>(message => ModStatusText.Text = message), closing.Token);
+            app.Preferences.UseCompanionOverlay = false; CompanionOverlay.IsChecked = false;
+            try { app.Preferences.Save(); } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+            await app.ResetConnectionAsync();
         }
         catch (OperationCanceledException) { ModStatusText.Text = "설치를 취소했습니다."; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException or ArgumentException or FormatException or OverflowException or System.ComponentModel.Win32Exception)
         { ModStatusText.Text = "설치하지 못했습니다. " + ex.Message; }
-        finally { InstallModButton.IsEnabled = true; LaunchModButton.IsEnabled = true; }
+        finally { SetModBusy(false); }
+    }
+    internal void ShowBusyNotice() => ModStatusText.Text = "앱 파일을 준비·교체·복원하는 중입니다. 작업이 끝나면 종료할 수 있습니다.";
+    private void SetModBusy(bool busy)
+    {
+        IsModOperationRunning = busy;
+        InstallModButton.IsEnabled = !busy; RestoreModButton.IsEnabled = !busy; LaunchModButton.IsEnabled = !busy;
+        ChooseDesktopButton.IsEnabled = !busy; DesktopAppPath.IsReadOnly = busy; BackupFolderButton.IsEnabled = !busy;
+    }
+    private async void RestoreMod(object sender, RoutedEventArgs args)
+    {
+        if (IsModOperationRunning) return; SetModBusy(true);
+        try { await DesktopModInstaller.RestoreAsync(new Progress<string>(message => ModStatusText.Text = message)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException or ArgumentException or FormatException or OverflowException)
+        { ModStatusText.Text = "복원하지 못했습니다. " + error.Message; }
+        finally { SetModBusy(false); }
+    }
+    private void CheckModAccess(object sender, RoutedEventArgs args)
+    {
+        if (IsModOperationRunning) return;
+        try { DesktopModInstaller.CheckAccess(DesktopAppPath.Text.Trim()); ModStatusText.Text = "앱 설치 폴더에 쓰기 권한이 있습니다. 앱에 패치할 수 있습니다."; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { ModStatusText.Text = error.Message; }
     }
     private void LaunchMod(object sender, RoutedEventArgs args)
     {
-        try { DesktopModInstaller.Launch(); ModStatusText.Text = "모드 앱을 실행했습니다. 앱에서 기본 펫 또는 커스텀 펫을 켜 주세요."; }
+        try { DesktopModInstaller.Launch(); ModStatusText.Text = "앱을 실행했습니다. 원하는 기본 펫 또는 커스텀 펫을 켜 주세요."; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         { ModStatusText.Text = ex.Message; }
     }
     private void CheckModStatus(object sender, RoutedEventArgs args) => ModStatusText.Text = DesktopModInstaller.Status();
     private void OpenModFolder(object sender, RoutedEventArgs args)
     {
-        var installed = DesktopModInstaller.Current();
-        if (installed is null) { ModStatusText.Text = "먼저 모드를 설치해 주세요."; return; }
-        try { Process.Start(new ProcessStartInfo(Path.GetDirectoryName(installed.Executable)!) { UseShellExecute = true }); }
-        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception) { ModStatusText.Text = "설치 폴더를 열지 못했습니다."; }
+        try { Directory.CreateDirectory(DesktopModInstaller.BackupFolder); Process.Start(new ProcessStartInfo(DesktopModInstaller.BackupFolder) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { ModStatusText.Text = "백업 폴더를 열지 못했습니다."; }
     }
     private async void SelectPet(object sender, RoutedEventArgs args)
     {

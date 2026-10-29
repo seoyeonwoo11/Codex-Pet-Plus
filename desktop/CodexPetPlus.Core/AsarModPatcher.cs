@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 namespace CodexPetPlus.Core;
 
 public sealed record AsarPatchResult(string OriginalHeaderHash, string PatchedHeaderHash, string MainEntry);
+public sealed record AsarRecoveryData(string MainEntry, long OriginalLength, byte[] Header, byte[] Main);
 
 public static class AsarModPatcher
 {
@@ -24,6 +25,64 @@ public static class AsarModPatcher
             || !value.TryGetValue<string>(out var version) || string.IsNullOrWhiteSpace(version) || version.Length > 128)
             throw new IOException("앱 패키지에서 실제 앱 버전을 확인하지 못했습니다.");
         return version;
+    }
+
+    public static AsarRecoveryData CaptureRecovery(string archiveFile)
+    {
+        using var source = File.OpenRead(archiveFile);
+        var (_, _, entries, dataOffset, _) = ReadArchive(source);
+        VerifyPackedLayout(entries, source.Length - dataOffset);
+        var package = entries.Single(entry => entry.Name == "package.json");
+        var metadata = JsonNode.Parse(ReadEntry(source, package, dataOffset, 1024 * 1024))!;
+        var mainName = Normalize(metadata["main"]?.GetValue<string>() ?? throw new IOException("앱 시작 파일이 없습니다."));
+        var main = entries.SingleOrDefault(entry => entry.Name == mainName) ?? throw new IOException("앱 시작 파일이 없습니다.");
+        var originalMain = ReadEntry(source, main, dataOffset, 32 * 1024 * 1024);
+        var header = new byte[checked((int)dataOffset)]; source.Position = 0; source.ReadExactly(header);
+        return new(mainName, source.Length, header, originalMain);
+    }
+
+    public static void RestoreArchive(string patchedFile, string destinationFile, AsarRecoveryData recovery)
+    {
+        if (recovery.Header.Length > 32 * 1024 * 1024 + 16 || recovery.Main.Length > 32 * 1024 * 1024)
+            throw new IOException("복원 데이터 크기가 올바르지 않습니다.");
+        using var header = new MemoryStream(recovery.Header, false);
+        var (_, _, originals, originalOffset, _) = ReadArchive(header);
+        if (originalOffset != recovery.Header.Length) throw new IOException("복원 헤더 크기가 일치하지 않습니다.");
+        VerifyPackedLayout(originals, recovery.OriginalLength - originalOffset);
+        using var source = File.OpenRead(patchedFile);
+        var (_, _, current, dataOffset, _) = ReadArchive(source);
+        var files = current.Where(entry => entry.Packed).ToDictionary(entry => entry.Name);
+        using var output = new FileStream(destinationFile, FileMode.CreateNew, FileAccess.Write);
+        output.Write(recovery.Header);
+        foreach (var original in originals.Where(entry => entry.Packed && entry.Size > 0).OrderBy(entry => entry.Offset))
+        {
+            if (original.Name == recovery.MainEntry)
+            {
+                if (recovery.Main.LongLength != original.Size) throw new IOException("앱 시작 파일 복원 크기가 일치하지 않습니다.");
+                output.Write(recovery.Main);
+            }
+            else
+            {
+                if (!files.TryGetValue(original.Name, out var file) || file.Size != original.Size)
+                    throw new IOException("앱 파일이 변경돼 원본을 복원할 수 없습니다.");
+                Validate(file, source.Length, dataOffset); source.Position = dataOffset + file.Offset;
+                CopyExactly(source, output, file.Size);
+            }
+        }
+        if (output.Length != recovery.OriginalLength) throw new IOException("복원된 앱 패키지의 크기가 일치하지 않습니다.");
+        output.Flush(true);
+    }
+
+    private static void VerifyPackedLayout(List<Entry> entries, long dataLength)
+    {
+        long offset = 0;
+        foreach (var entry in entries.Where(entry => entry.Packed && entry.Size > 0).OrderBy(entry => entry.Offset))
+        {
+            if (entry.Offset != offset || entry.Size > dataLength - offset)
+                throw new IOException("이 앱 패키지는 부분 백업 형식을 지원하지 않습니다.");
+            offset = checked(offset + entry.Size);
+        }
+        if (offset != dataLength) throw new IOException("이 앱 패키지는 부분 백업 형식을 지원하지 않습니다.");
     }
 
     public static AsarPatchResult Patch(string sourceFile, string destinationFile, string runtime)

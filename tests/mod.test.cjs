@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const mod = require('../mod/runtime.cjs');
 
 test('pet routes identify the app page independently of the custom skin', () => {
@@ -65,7 +67,7 @@ test('app-internal mod attaches automatically, follows, hides, and reconnects wi
   const host = desktop();
   const main = new host.BrowserWindow({ url: 'file:///app/index.html#/main' });
   const pet = new host.BrowserWindow({ url: 'file:///app/index.html#/avatar-overlay' }); pet.visible = true;
-  const running = mod.start(host, '/unused', host.client);
+  const running = mod.start(host, '/unused', host.client, null);
   try {
     await tick(); await running.refresh();
     let panels = host.BrowserWindow.windows.filter(window => window.options.parent);
@@ -87,10 +89,31 @@ test('app-internal mod attaches automatically, follows, hides, and reconnects wi
 });
 test('navigating away from the pet page hides the addon without modifying app windows', async () => {
   const host = desktop(); const pet = new host.BrowserWindow({ url: 'file:///app/index.html#/avatar-overlay' }); pet.visible = true;
-  const running = mod.start(host, '/unused', host.client);
+  const running = mod.start(host, '/unused', host.client, null);
   try {
     await tick(); const panel = host.BrowserWindow.windows.find(window => window.options.parent);
     pet.webContents.url = 'file:///app/index.html#/settings'; pet.webContents.emit('did-navigate');
     assert.equal(panel.isVisible(), false); assert.equal(pet.isDestroyed(), false);
   } finally { running.stop(); }
+});
+test('mod health status is stored in the user state directory instead of app resources', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-mod-state-'));
+  const resources = path.join(directory, 'resources'), state = path.join(directory, 'user-state'); fs.mkdirSync(resources);
+  const host = desktop(); const pet = new host.BrowserWindow({ url: 'file:///app/index.html#/avatar-overlay' }); pet.visible = true;
+  const running = mod.start(host, resources, host.client, state);
+  try {
+    await tick(); await running.refresh();
+    const status = JSON.parse(fs.readFileSync(path.join(state, 'runtime-status.json'), 'utf8'));
+    assert.equal(status.running, true); assert.equal(status.petWindows, 1); assert.equal(status.quotaAvailable, true);
+    assert.equal(Object.hasOwn(status, 'primary'), false); assert.equal(Object.hasOwn(status, 'remaining'), false);
+    assert.deepEqual(fs.readdirSync(resources), []);
+  } finally { running.stop(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+test('a transient pet window API error cannot escape into the host app event loop', async () => {
+  const host = desktop(); const pet = new host.BrowserWindow({ url: 'file:///app/index.html#/avatar-overlay' }); pet.visible = true;
+  const running = mod.start(host, '/unused', host.client, null);
+  try {
+    await tick(); pet.getBounds = () => { throw new Error('DESTROYED_NATIVE_HANDLE_FIXTURE'); };
+    assert.doesNotThrow(() => pet.emit('move')); assert.equal(pet.isDestroyed(), false);
+  } finally { assert.doesNotThrow(() => running.stop()); }
 });

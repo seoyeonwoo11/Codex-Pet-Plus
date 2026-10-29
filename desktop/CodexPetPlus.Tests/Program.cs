@@ -164,6 +164,76 @@ AsyncTest("executable metadata accepts only the verified original ASAR hash", ()
     return Task.CompletedTask;
 }));
 
+async Task WithDirectApp(Func<string, string, string, byte[], byte[], Task> action)
+{
+    await WithHome(async home => {
+        var directory = Path.Combine(home, "installed-app"); Directory.CreateDirectory(Path.Combine(directory, "resources"));
+        var archive = Path.Combine(directory, "resources", "app.asar"); File.Copy(FixtureArchive("cjs"), archive);
+        var originalArchive = File.ReadAllBytes(archive);
+        var headerLength = (int)BinaryPrimitives.ReadUInt32LittleEndian(originalArchive.AsSpan(12));
+        var headerHash = Convert.ToHexString(SHA256.HashData(originalArchive.AsSpan(16, headerLength)));
+        // Preserve uppercase integrity values and changes that cross a 64 KiB boundary.
+        var marker = "{\"file\":\"resources\\\\app.asar\",\"alg\":\"SHA256\",\"value\":\"" + headerHash + "\"}";
+        var originalExe = Encoding.ASCII.GetBytes("MZ" + new string('x', 65464) + marker + "UNCHANGED_CERTIFICATE_FIXTURE");
+        var executable = Path.Combine(directory, "ChatGPT.exe"); File.WriteAllBytes(executable, originalExe);
+        await File.WriteAllBytesAsync(Path.Combine(directory, "unchanged.dll"), RandomNumberGenerator.GetBytes(512 * 1024));
+        Directory.CreateDirectory(archive + ".unpacked"); File.WriteAllText(Path.Combine(archive + ".unpacked", "native.node"), "UNCHANGED_NATIVE_FIXTURE");
+        await action(executable, archive, Path.Combine(home, "recovery.zip"), originalExe, originalArchive);
+    });
+}
+AsyncTest("direct patch preparation backs up only changed information and leaves originals intact", () => WithDirectApp((exe, archive, backup, originalExe, originalArchive) => {
+    using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 'direct runtime';");
+    Check(File.ReadAllBytes(exe).SequenceEqual(originalExe) && File.ReadAllBytes(archive).SequenceEqual(originalArchive), "Preparation modified the installed app");
+    using var zip = System.IO.Compression.ZipFile.OpenRead(backup);
+    Check(zip.Entries.Select(entry => entry.FullName).Order().SequenceEqual(new[] { "asar-header.bin", "asar-main.bin", "metadata.json" }), "Backup contains whole app files");
+    Check(new FileInfo(backup).Length < 8192, "Small changed information expanded into an executable/app copy");
+    Check(Path.GetDirectoryName(plan.StagedExecutable) == Path.GetDirectoryName(exe) && Path.GetDirectoryName(plan.StagedArchive) == Path.GetDirectoryName(archive), "Replacement files are on another volume");
+    return Task.CompletedTask;
+}));
+AsyncTest("direct patch and restore reproduce both original files byte for byte", () => WithDirectApp((exe, archive, backup, originalExe, originalArchive) => {
+    using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 'direct runtime';"); plan.Commit();
+    Check(!File.ReadAllBytes(exe).SequenceEqual(originalExe), "Executable integrity was not updated");
+    Check(AsarText(archive, "codex-pet-plus-runtime.cjs") == "module.exports = 'direct runtime';", "Mod runtime is missing");
+    DirectModPatch.Restore(exe, backup); DirectModPatch.Restore(exe, backup);
+    Check(File.ReadAllBytes(exe).SequenceEqual(originalExe) && File.ReadAllBytes(archive).SequenceEqual(originalArchive), "Original signatures or archive bytes were not restored");
+    Check(File.ReadAllText(Path.Combine(archive + ".unpacked", "native.node")) == "UNCHANGED_NATIVE_FIXTURE", "Unpacked native resources changed");
+    Check(DirectModPatch.IsOriginal(exe, backup), "Restored originals were not recognized");
+    return Task.CompletedTask;
+}));
+AsyncTest("interruption between the two replacements can restore a mixed file state", () => WithDirectApp((exe, archive, backup, originalExe, originalArchive) => {
+    using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 1;");
+    File.Replace(plan.StagedArchive, archive, null);
+    DirectModPatch.Restore(exe, backup);
+    Check(File.ReadAllBytes(exe).SequenceEqual(originalExe) && File.ReadAllBytes(archive).SequenceEqual(originalArchive), "Interrupted installation could not recover");
+    return Task.CompletedTask;
+}));
+AsyncTest("restore refuses to overwrite an app update or another mod", () => WithDirectApp((exe, archive, backup, _, _) => {
+    using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 1;"); plan.Commit();
+    File.AppendAllText(archive, "EXTERNAL_UPDATE_FIXTURE");
+    var beforeExe = File.ReadAllBytes(exe); var beforeArchive = File.ReadAllBytes(archive);
+    try { DirectModPatch.Restore(exe, backup); throw new Exception("External update overwritten"); } catch (IOException) { }
+    Check(File.ReadAllBytes(exe).SequenceEqual(beforeExe) && File.ReadAllBytes(archive).SequenceEqual(beforeArchive), "A rejected restore changed files");
+    return Task.CompletedTask;
+}));
+AsyncTest("source or staged file changes abort direct patch before any replacement", async () => {
+    foreach (var changeStaged in new[] { false, true }) await WithDirectApp((exe, archive, backup, _, originalArchive) => {
+        using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 1;");
+        File.AppendAllText(changeStaged ? plan.StagedExecutable : exe, "CHANGED_FILE_FIXTURE");
+        var before = File.ReadAllBytes(exe);
+        try { plan.Commit(); throw new Exception("Changed files accepted"); } catch (IOException) { }
+        Check(File.ReadAllBytes(exe).SequenceEqual(before) && File.ReadAllBytes(archive).SequenceEqual(originalArchive), "Aborted patch modified the app");
+        return Task.CompletedTask;
+    });
+});
+AsyncTest("corrupt recovery data never changes installed files", () => WithDirectApp((exe, archive, backup, _, _) => {
+    using var plan = DirectModPatch.Prepare(exe, backup, "module.exports = 1;"); plan.Commit();
+    File.WriteAllText(backup, "CORRUPT_BACKUP_FIXTURE");
+    var beforeExe = File.ReadAllBytes(exe); var beforeArchive = File.ReadAllBytes(archive);
+    try { DirectModPatch.Restore(exe, backup); throw new Exception("Corrupt backup accepted"); } catch (IOException) { }
+    Check(File.ReadAllBytes(exe).SequenceEqual(beforeExe) && File.ReadAllBytes(archive).SequenceEqual(beforeArchive), "Corrupt backup changed installed files");
+    return Task.CompletedTask;
+}));
+
 string Record(int percent, DateTimeOffset at, string limit = "codex") => JsonSerializer.Serialize(new { timestamp = at, type = "event_msg", payload = new { type = "token_count", rate_limits = new { limit_id = limit, primary = new { used_percent = percent, window_minutes = 300, resets_at = at.AddHours(2).ToUnixTimeSeconds() } } } });
 async Task WithHome(Func<string, Task> action)
 {

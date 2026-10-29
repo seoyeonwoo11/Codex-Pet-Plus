@@ -6,12 +6,13 @@
       <TextBlock Text="ChatGPT / Codex 앱 모드" FontSize="17" FontWeight="SemiBold" Foreground="#2C3428"/>
       <TextBlock x:Name="ModVersionText" Margin="0,8,0,12" FontSize="12" Foreground="#64794D"/>
       <TextBlock x:Name="DetectedAppVersionText" Text="감지한 앱 버전: 확인 중" Margin="0,0,0,12" FontSize="12" Foreground="#64794D" TextWrapping="Wrap"/>
+      <TextBlock x:Name="ModStorageText" Text="앱 전체 복사 없이 직접 패치합니다." Margin="0,0,0,12" FontSize="12" Foreground="#64794D" TextWrapping="Wrap"/>
       <TextBlock Text="앱 실행 파일 · 실행 중인 앱이나 설치된 Windows 패키지에서 자동 검색" FontSize="11" Foreground="#7C8772" TextWrapping="Wrap"/>
-      <DockPanel Margin="0,7,0,14"><Button Content="찾기…" DockPanel.Dock="Right" Margin="8,0,0,0" Click="ChooseDesktopApp"/><TextBox x:Name="DesktopAppPath"/></DockPanel>
-      <WrapPanel><Button x:Name="InstallModButton" Content="모드 설치 / 다시 설치" Click="InstallMod"/><Button x:Name="LaunchModButton" Content="모드 앱 실행" Click="LaunchMod"/><Button Content="상태 확인" Click="CheckModStatus"/><Button Content="설치 폴더 열기" Click="OpenModFolder"/></WrapPanel>
+      <DockPanel Margin="0,7,0,14"><Button x:Name="ChooseDesktopButton" Content="찾기…" DockPanel.Dock="Right" Margin="8,0,0,0" Click="ChooseDesktopApp"/><TextBox x:Name="DesktopAppPath"/></DockPanel>
+      <WrapPanel><Button x:Name="InstallModButton" Content="앱에 패치" Click="InstallMod"/><Button x:Name="RestoreModButton" Content="원본 복원" Click="RestoreMod"/><Button x:Name="LaunchModButton" Content="앱 실행" Click="LaunchMod"/><Button Content="쓰기 권한 확인" Click="CheckModAccess"/><Button Content="상태 확인" Click="CheckModStatus"/><Button x:Name="BackupFolderButton" Content="백업 폴더 열기" Click="OpenModFolder"/></WrapPanel>
       <TextBlock x:Name="ModStatusText" Text="앱을 찾는 중입니다." Margin="0,12,0,0" Foreground="#64794D" TextWrapping="Wrap"/>
-      <TextBlock Text="사용자 폴더에 앱 복사본을 만들고 모드를 설치합니다. 설치 후 앱을 트레이에서도 완전히 종료한 뒤 ‘모드 앱 실행’ 또는 시작 메뉴의 Codex Pet Plus로 여세요. 앱에서 원하는 펫을 켜면 한도가 자동으로 붙습니다." Margin="0,14,0,0" FontSize="12" Foreground="#7C8772" TextWrapping="Wrap" LineHeight="19"/>
-      <TextBlock Text="비공식 앱 모드입니다. 복사본의 실행 파일 서명이 달라지며, 앱 업데이트 후에는 해당 버전에 맞는 모드를 다시 설치해야 합니다." Margin="0,10,0,0" FontSize="11" Foreground="#8B7560" TextWrapping="Wrap"/>
+      <TextBlock Text="진행 중인 작업을 마치고 앱을 트레이에서도 완전히 종료한 뒤 ‘앱에 패치’를 누르세요. 이후 평소 쓰던 앱 바로가기로 열고 원하는 펫을 켜면 한도가 자동으로 붙습니다. 변경 전 정보만 압축 백업하며, 백업을 삭제하기 전에는 ‘원본 복원’을 실행하세요." Margin="0,14,0,0" FontSize="12" Foreground="#7C8772" TextWrapping="Wrap" LineHeight="19"/>
+      <TextBlock Text="비공식 모드입니다. 기존 실행 파일과 app.asar를 수정해 서명이 달라집니다. WindowsApps 보호 설치본은 쓰기 권한·패키지 무결성 정책으로 직접 패치나 실행이 제한될 수 있습니다. 앱 업데이트 전에는 원본을 복원하세요." Margin="0,10,0,0" FontSize="11" Foreground="#8B7560" TextWrapping="Wrap"/>
     </StackPanel></Border>
     <Expander Header="별도 표시줄로 연결하기"><StackPanel Margin="0,12,0,0">
     <CheckBox x:Name="CompanionOverlay" Content="별도 표시줄 사용 (모드와 함께 켜면 중복 표시됩니다)" Margin="0,0,0,12"/>
